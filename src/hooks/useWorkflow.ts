@@ -1,24 +1,35 @@
 import { useState, useCallback } from 'react';
-import { AgentNode, WorkflowState } from '../types/workflow';
+import { AgentNode } from '../types/workflow';
+
+// Define the shape of the data in the exported/imported JSON file.
+// Notice that the agent data itself does not contain the name.
+type ExportedAgentData = Omit<AgentNode, 'id' | 'position' | 'name'>;
+interface ExportedWorkflow {
+  start_node: string;
+  agents: Record<string, ExportedAgentData>;
+}
 
 export const useWorkflow = () => {
   const [nodes, setNodes] = useState<AgentNode[]>([]);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [startNodeId, setStartNodeId] = useState<string>('');
-  const [draggedNodeType, setDraggedNodeType] = useState<'conversational' | 'tool_execution' | null>(null);
-
-  const generateId = () => Math.random().toString(36).substring(2, 15);
 
   const addNode = useCallback((position: { x: number; y: number }, type: 'conversational' | 'tool_execution') => {
     const nodeCount = nodes.filter(n => n.type === type).length + 1;
-    const baseName = type === 'conversational' ? 'ConversationalAgent' : 'ToolExecutionAgent';
-    const name = `${baseName}${nodeCount}`;
+    let baseName = type === 'conversational' ? 'ConversationalAgent' : 'ToolExecutionAgent';
+    let newName = `${baseName}${nodeCount}`;
+
+    // Ensure new node name is unique
+    while (nodes.some(n => n.name === newName)) {
+        baseName += '+';
+        newName = `${baseName}${nodeCount}`;
+    }
 
     const newNode: AgentNode = {
-      id: generateId(),
-      name,
+      id: crypto.randomUUID(),
+      name: newName,
       type,
-      initial_prompt: '',
+      initial_prompt: 'A new agent ready for a prompt.',
       tools: [],
       force_tool_call: type === 'tool_execution',
       transitions: {},
@@ -29,32 +40,37 @@ export const useWorkflow = () => {
     
     // Set as start node if it's the first node
     if (nodes.length === 0) {
-      setStartNodeId(name);
+      setStartNodeId(newName);
     }
   }, [nodes]);
 
   const updateNode = useCallback((updatedNode: AgentNode) => {
-    setNodes(prev => prev.map(node => 
-      node.id === updatedNode.id ? updatedNode : node
-    ));
-
-    // Update start node if name changed
     const originalNode = nodes.find(n => n.id === updatedNode.id);
-    if (originalNode && originalNode.name === startNodeId && originalNode.name !== updatedNode.name) {
-      setStartNodeId(updatedNode.name);
-    }
 
-    // Update transitions that reference the old name
-    if (originalNode && originalNode.name !== updatedNode.name) {
-      setNodes(prev => prev.map(node => ({
-        ...node,
-        transitions: Object.fromEntries(
-          Object.entries(node.transitions).map(([condition, target]) => [
-            condition,
-            target === originalNode.name ? updatedNode.name : target
-          ])
-        )
-      })));
+    setNodes(prev => {
+        // First, update the node itself
+        let newNodes = prev.map(node => node.id === updatedNode.id ? updatedNode : node);
+        
+        // If the name changed, update all transitions pointing to the old name
+        if (originalNode && originalNode.name !== updatedNode.name) {
+            newNodes = newNodes.map(node => {
+                const newTransitions = { ...node.transitions };
+                let changed = false;
+                for (const key in newTransitions) {
+                    if (newTransitions[key] === originalNode.name) {
+                        newTransitions[key] = updatedNode.name;
+                        changed = true;
+                    }
+                }
+                return changed ? { ...node, transitions: newTransitions } : node;
+            });
+        }
+        return newNodes;
+    });
+
+    // If the start node was the one that got renamed, update the startNodeId
+    if (originalNode && originalNode.name === startNodeId) {
+        setStartNodeId(updatedNode.name);
     }
   }, [nodes, startNodeId]);
 
@@ -62,21 +78,28 @@ export const useWorkflow = () => {
     const nodeToDelete = nodes.find(n => n.id === nodeId);
     if (!nodeToDelete) return;
 
-    // Remove transitions pointing to this node
-    setNodes(prev => prev
-      .filter(node => node.id !== nodeId)
-      .map(node => ({
-        ...node,
-        transitions: Object.fromEntries(
-          Object.entries(node.transitions).filter(([, target]) => target !== nodeToDelete.name)
-        )
-      }))
-    );
+    setNodes(prev => {
+      // Filter out the deleted node
+      const remainingNodes = prev.filter(node => node.id !== nodeId);
+      
+      // Remove any transitions that were pointing to the deleted node
+      return remainingNodes.map(node => {
+        const newTransitions = { ...node.transitions };
+        let changed = false;
+        Object.keys(newTransitions).forEach(key => {
+            if(newTransitions[key] === nodeToDelete.name) {
+                delete newTransitions[key];
+                changed = true;
+            }
+        });
+        return changed ? { ...node, transitions: newTransitions } : node;
+      });
+    });
 
-    // Update start node if needed
+    // If the deleted node was the start node, pick a new start node or clear it
     if (nodeToDelete.name === startNodeId) {
-      const remainingNodes = nodes.filter(n => n.id !== nodeId);
-      setStartNodeId(remainingNodes.length > 0 ? remainingNodes[0].name : '');
+        const newStartNode = nodes.find(n => n.id !== nodeId);
+        setStartNodeId(newStartNode ? newStartNode.name : '');
     }
 
     if (selectedNodeId === nodeId) {
@@ -90,18 +113,13 @@ export const useWorkflow = () => {
     setStartNodeId('');
   }, []);
 
-  const exportWorkflow = useCallback((): WorkflowState => {
-    const agents: Record<string, Omit<AgentNode, 'id' | 'position'>> = {};
+  const exportWorkflow = useCallback((): ExportedWorkflow => {
+    const agents: Record<string, ExportedAgentData> = {};
     
     nodes.forEach(node => {
-      agents[node.name] = {
-        name: node.name,
-        type: node.type,
-        initial_prompt: node.initial_prompt,
-        tools: node.tools,
-        force_tool_call: node.force_tool_call,
-        transitions: node.transitions
-      };
+      // Destructure to remove properties that shouldn't be in the exported agent object
+      const { id, position, name, ...agentData } = node;
+      agents[name] = agentData;
     });
 
     return {
@@ -110,27 +128,36 @@ export const useWorkflow = () => {
     };
   }, [nodes, startNodeId]);
 
-  const importWorkflow = useCallback((workflow: { agent_graph: WorkflowState }) => {
+  const importWorkflow = useCallback((workflow: { agent_graph: ExportedWorkflow }) => {
     const { agent_graph } = workflow;
-    const importedNodes: AgentNode[] = [];
-    
-    // Calculate positions in a grid layout
+    if (!agent_graph || !agent_graph.agents) {
+        alert("Import failed: Invalid JSON structure.");
+        return;
+    }
+
     const nodeNames = Object.keys(agent_graph.agents);
-    const cols = Math.ceil(Math.sqrt(nodeNames.length));
+    const cols = Math.ceil(Math.sqrt(nodeNames.length) || 1);
     
-    nodeNames.forEach((name, index) => {
-      const agent = agent_graph.agents[name];
+    const importedNodes: AgentNode[] = nodeNames.map((name, index) => {
+      const agentData = agent_graph.agents[name];
       const row = Math.floor(index / cols);
       const col = index % cols;
       
-      importedNodes.push({
-        id: generateId(),
-        ...agent,
+      // Explicitly construct the AgentNode to ensure correct structure
+      const newNode: AgentNode = {
+        id: crypto.randomUUID(),
+        name: name, // Name comes from the key
+        type: agentData.type,
+        initial_prompt: agentData.initial_prompt,
+        tools: agentData.tools,
+        force_tool_call: agentData.force_tool_call,
+        transitions: agentData.transitions,
         position: {
-          x: 100 + col * 350,
-          y: 100 + row * 250
+          x: 100 + col * 400, // Increased horizontal spacing
+          y: 100 + row * 350
         }
-      });
+      };
+      return newNode;
     });
 
     setNodes(importedNodes);
@@ -140,31 +167,18 @@ export const useWorkflow = () => {
 
   const validateWorkflow = useCallback(() => {
     const errors: string[] = [];
+    if (!startNodeId) errors.push("A start node must be designated.");
     
-    if (nodes.length === 0) {
-      errors.push('Workflow must have at least one node');
-    }
-
-    if (!startNodeId) {
-      errors.push('A start node must be designated');
-    }
-
-    const nodeNames = new Set();
+    const nodeNames = new Set<string>();
     nodes.forEach(node => {
-      if (nodeNames.has(node.name)) {
-        errors.push(`Duplicate node name: ${node.name}`);
-      }
+      if (nodeNames.has(node.name)) errors.push(`Duplicate node name: "${node.name}".`);
       nodeNames.add(node.name);
 
-      if (!node.initial_prompt.trim()) {
-        errors.push(`Node "${node.name}" is missing an initial prompt`);
-      }
+      if (!node.initial_prompt.trim()) errors.push(`Node "${node.name}" is missing an initial prompt.`);
 
-      // Check if transitions point to valid nodes
-      Object.values(node.transitions).forEach(targetName => {
-        if (targetName && !nodes.some(n => n.name === targetName)) {
-          errors.push(`Node "${node.name}" has transition to non-existent node: ${targetName}`);
-        }
+      Object.entries(node.transitions).forEach(([condition, targetName]) => {
+        if (!targetName) errors.push(`Node "${node.name}" has an incomplete transition for condition "${condition}".`);
+        else if (!nodes.some(n => n.name === targetName)) errors.push(`Node "${node.name}" has a transition to a non-existent node: "${targetName}".`);
       });
     });
 
@@ -175,10 +189,8 @@ export const useWorkflow = () => {
     nodes,
     selectedNodeId,
     startNodeId,
-    draggedNodeType,
     setSelectedNodeId,
     setStartNodeId,
-    setDraggedNodeType,
     addNode,
     updateNode,
     deleteNode,

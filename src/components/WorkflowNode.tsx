@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { MessageCircle, Cog, Play, Trash2, Plus, X, Move } from 'lucide-react';
+import { MessageCircle, Cog, Play, Trash2, Plus, ChevronsDown, ChevronsUp, Move, Check, X as IconX } from 'lucide-react';
 import { AgentNode, AVAILABLE_TOOLS } from '../types/workflow';
 
 interface WorkflowNodeProps {
@@ -40,61 +40,78 @@ export const WorkflowNode: React.FC<WorkflowNodeProps> = ({
   const [isExpanded, setIsExpanded] = useState(false);
   const [editingName, setEditingName] = useState(false);
   const [tempName, setTempName] = useState(node.name);
-  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [nameError, setNameError] = useState('');
 
   const isConversational = node.type === 'conversational';
+  const transitionEntries = Object.entries(node.transitions);
 
-  const validateName = (name: string): boolean => {
-    if (!name.trim()) {
-      setErrors(prev => ({ ...prev, name: 'Name is required' }));
-      return false;
+  const nodeColors = {
+    conversational: {
+      bg: 'bg-blue-50',
+      border: 'border-blue-400',
+      shadow: 'shadow-blue-500/20',
+      text: 'text-blue-800',
+      icon: 'text-blue-600',
+    },
+    tool_execution: {
+      bg: 'bg-purple-50',
+      border: 'border-purple-400',
+      shadow: 'shadow-purple-500/20',
+      text: 'text-purple-800',
+      icon: 'text-purple-600',
     }
-    if (name !== node.name && nodes.some(n => n.name === name)) {
-      setErrors(prev => ({ ...prev, name: 'Name must be unique' }));
-      return false;
-    }
-    setErrors(prev => ({ ...prev, name: '' }));
-    return true;
   };
+  const colors = isConversational ? nodeColors.conversational : nodeColors.tool_execution;
 
-  const handleNameSave = () => {
-    if (validateName(tempName)) {
-      onUpdate({ ...node, name: tempName });
+  const validateAndSaveName = () => {
+    if (!tempName.trim()) {
+      setNameError('Name cannot be empty.');
+      return;
+    }
+    if (nodes.some(n => n.id !== node.id && n.name === tempName)) {
+      setNameError('Name must be unique.');
+      return;
+    }
+    onUpdate({ ...node, name: tempName });
+    setNameError('');
+    setEditingName(false);
+  };
+  
+  const handleNameKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      validateAndSaveName();
+    } else if (e.key === 'Escape') {
+      setTempName(node.name);
+      setNameError('');
       setEditingName(false);
     }
   };
 
-  const handleNameCancel = () => {
-    setTempName(node.name);
-    setEditingName(false);
-    setErrors(prev => ({ ...prev, name: '' }));
-  };
-
-  const updatePrompt = (prompt: string) => {
-    onUpdate({ ...node, initial_prompt: prompt });
-  };
-
   const addTransition = () => {
-    const newTransitions = { ...node.transitions, '': '' };
-    onUpdate({ ...node, transitions: newTransitions });
+    const newCondition = 'new_condition';
+    let i = 1;
+    while (`${newCondition}_${i}` in node.transitions) {
+      i++;
+    }
+    onUpdate({ ...node, transitions: { ...node.transitions, [`${newCondition}_${i}`]: '' } });
   };
-
+  
   const updateTransitionCondition = (oldCondition: string, newCondition: string) => {
+    if (oldCondition === newCondition) return;
     const newTransitions = { ...node.transitions };
-    const targetName = newTransitions[oldCondition];
+    const target = newTransitions[oldCondition];
     delete newTransitions[oldCondition];
-    if (newCondition.trim()) {
-      newTransitions[newCondition] = targetName;
+    if(newCondition) {
+        newTransitions[newCondition] = target;
     }
     onUpdate({ ...node, transitions: newTransitions });
   };
 
   const removeTransition = (condition: string) => {
-    const newTransitions = { ...node.transitions };
-    delete newTransitions[condition];
-    onUpdate({ ...node, transitions: newTransitions });
+    const { [condition]: _, ...rest } = node.transitions;
+    onUpdate({ ...node, transitions: rest });
   };
-
+  
   const toggleTool = (tool: string) => {
     const newTools = node.tools.includes(tool)
       ? node.tools.filter(t => t !== tool)
@@ -116,282 +133,87 @@ export const WorkflowNode: React.FC<WorkflowNodeProps> = ({
       onClick();
     }
   };
-
-  const handleHeaderMouseDown = (e: React.MouseEvent) => {
-    if (
-      e.target instanceof HTMLElement && 
-      !e.target.closest('button') && 
-      !e.target.closest('input') &&
-      !e.target.closest('textarea') &&
-      !editingName
-    ) {
-      onMouseDown(e);
-    }
-  };
-
-  const transitionEntries = Object.entries(node.transitions);
-
+  
   return (
     <div
-      className={`absolute bg-white rounded-lg shadow-md border-2 transition-all hover:shadow-lg ${
-        isDragging ? 'shadow-2xl scale-105 z-50' : ''
-      } ${
-        isSelected 
-          ? 'border-purple-400 shadow-purple-100' 
-          : isConversational 
-            ? 'border-blue-200 hover:border-blue-300' 
-            : 'border-teal-200 hover:border-teal-300'
-      } ${isExpanded ? 'w-80' : 'w-64'}`}
+      className={`absolute bg-white rounded-xl transition-all duration-150 flex flex-col ${isDragging ? `shadow-2xl scale-105 z-50 ${colors.shadow}` : `shadow-lg ${colors.shadow}`} ${isSelected ? `border-2 ${colors.border}` : 'border border-gray-200'} w-80`}
       style={{ left: node.position.x, top: node.position.y }}
       onClick={handleNodeClick}
     >
-      {isStartNode && (
-        <div className="absolute -top-2 -left-2 bg-green-500 text-white rounded-full p-1 z-20">
-          <Play className="w-3 h-3" />
-        </div>
-      )}
-
-      {/* Input connection point */}
-       <div
-        ref={registerInputTerminal}
-        className="absolute left-0 top-1/2 -translate-x-1/2 -translate-y-1/2 w-6 h-6 z-0"
-      >
-        {connectionInProgress && (
-            <div className="w-full h-full bg-purple-200 rounded-full border-2 border-white shadow-lg animate-pulse ring-2 ring-purple-400"></div>
-        )}
-      </div>
+      {isStartNode && <div className="absolute -top-3 -left-3 bg-green-500 text-white rounded-full p-1.5 z-20 shadow-md border-2 border-white"><Play className="w-4 h-4" /></div>}
+      <div ref={registerInputTerminal} className="absolute left-0 top-1/2 -translate-x-1/2 -translate-y-1/2 w-6 h-6 z-0">{connectionInProgress && <div className="w-full h-full bg-purple-200 rounded-full border-2 border-white shadow-lg animate-pulse ring-2 ring-purple-400"></div>}</div>
       
-      {/* Header with drag handle */}
       <div 
-        className={`p-3 rounded-t-lg flex items-center justify-between ${isConversational ? 'bg-blue-50' : 'bg-teal-50'} ${
-          isDragging ? 'cursor-grabbing' : 'cursor-grab'
-        }`}
-        onMouseDown={handleHeaderMouseDown}
+        className={`p-3 rounded-t-xl flex items-center justify-between ${colors.bg} cursor-grab active:cursor-grabbing`}
+        onMouseDown={onMouseDown}
       >
-        <div className="flex items-center space-x-2 cursor-grab" onMouseDown={handleHeaderMouseDown}>
-          <Move className="w-3 h-3 text-gray-400" />
-          {isConversational ? (
-            <MessageCircle className="w-4 h-4 text-blue-600" />
-          ) : (
-            <Cog className="w-4 h-4 text-teal-600" />
-          )}
-          <span className={`text-xs font-medium ${isConversational ? 'text-blue-800' : 'text-teal-800'}`}>
-            {isConversational ? 'Conversational' : 'Tool Execution'}
-          </span>
+        <div className="flex items-center space-x-3">
+            <Move className="w-4 h-4 text-gray-400 pointer-events-none" />
+            <div className="flex items-center space-x-2">
+                {isConversational ? <MessageCircle className={`w-5 h-5 ${colors.icon}`} /> : <Cog className={`w-5 h-5 ${colors.icon}`} />}
+                {editingName ? (
+                    <div className="flex flex-col" onMouseDown={e => e.stopPropagation()}>
+                        <input type="text" value={tempName} onChange={e => setTempName(e.target.value)} onKeyDown={handleNameKeyDown} onBlur={validateAndSaveName} autoFocus onClick={e => e.stopPropagation()} className={`px-2 py-1 text-md font-semibold rounded-md border ${nameError ? 'border-red-400' : 'border-blue-300'} focus:ring-2 focus:ring-blue-300 focus:outline-none`} />
+                        {nameError && <p className="text-xs text-red-600 mt-1">{nameError}</p>}
+                    </div>
+                ) : (
+                    <h3 onClick={e => { e.stopPropagation(); setEditingName(true); }} onMouseDown={e => e.stopPropagation()} className={`font-semibold text-md ${colors.text} cursor-pointer hover:bg-white/60 px-2 py-1 rounded-md`}>{node.name}</h3>
+                )}
+            </div>
         </div>
-        
-        <div className="flex space-x-1">
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              setIsExpanded(!isExpanded);
-            }}
-            className="p-1 hover:bg-white rounded text-gray-500"
-            title={isExpanded ? 'Collapse' : 'Expand'}
-          >
-            {isExpanded ? <X className="w-3 h-3" /> : <Plus className="w-3 h-3" />}
-          </button>
-          {!isStartNode && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onSetAsStart();
-              }}
-              className="p-1 hover:bg-white rounded text-gray-500 hover:text-green-600"
-              title="Set as start node"
-            >
-              <Play className="w-3 h-3" />
-            </button>
-          )}
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onDelete();
-            }}
-            className="p-1 hover:bg-white rounded text-gray-500 hover:text-red-600"
-            title="Delete node"
-          >
-            <Trash2 className="w-3 h-3" />
-          </button>
+        <div className="flex items-center space-x-1">
+          <button onClick={e => { e.stopPropagation(); onDelete(); }} onMouseDown={e => e.stopPropagation()} className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-100 rounded-md" title="Delete node"><Trash2 className="w-4 h-4" /></button>
+          {!isStartNode && <button onClick={e => { e.stopPropagation(); onSetAsStart(); }} onMouseDown={e => e.stopPropagation()} className="p-1.5 text-gray-400 hover:text-green-600 hover:bg-green-100 rounded-md" title="Set as start node"><Play className="w-4 h-4" /></button>}
         </div>
       </div>
       
-      {/* Content */}
-      <div className="p-3 space-y-3">
-        {/* Name */}
+      <div className={`p-4 space-y-4 transition-all duration-300 ${isExpanded ? 'max-h-none' : 'max-h-0 overflow-hidden'}`}>
         <div>
-          {editingName ? (
-            <div className="space-y-1">
-              <input
-                type="text"
-                value={tempName}
-                onChange={(e) => setTempName(e.target.value)}
-                onBlur={handleNameSave}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') handleNameSave();
-                  if (e.key === 'Escape') handleNameCancel();
-                }}
-                className={`w-full px-2 py-1 text-sm border rounded focus:ring-1 focus:ring-purple-500 ${
-                  errors.name ? 'border-red-300' : 'border-gray-300'
-                }`}
-                autoFocus
-                onClick={(e) => e.stopPropagation()}
-              />
-              {errors.name && <p className="text-xs text-red-600">{errors.name}</p>}
-            </div>
-          ) : (
-            <h3 
-              className="font-semibold text-gray-800 cursor-text hover:bg-gray-50 px-1 py-0.5 rounded"
-              onClick={(e) => {
-                e.stopPropagation();
-                setEditingName(true);
-              }}
-            >
-              {node.name}
-            </h3>
-          )}
+          <label className="block text-xs font-medium text-gray-500 mb-1">Initial Prompt</label>
+          <textarea value={node.initial_prompt} onChange={e => onUpdate({ ...node, initial_prompt: e.target.value })} onClick={e => e.stopPropagation()} rows={3} className="w-full text-sm p-2 bg-gray-50 border border-gray-200 rounded-md focus:ring-2 focus:ring-purple-300 focus:outline-none" placeholder="Enter agent's starting instructions..." />
         </div>
-
-        {/* Initial Prompt */}
-        <div>
-          <label className="block text-xs font-medium text-gray-600 mb-1">Initial Prompt</label>
-          <textarea
-            value={node.initial_prompt}
-            onChange={(e) => updatePrompt(e.target.value)}
-            onClick={(e) => e.stopPropagation()}
-            rows={isExpanded ? 4 : 2}
-            className="w-full px-2 py-1 text-xs border border-gray-200 rounded focus:ring-1 focus:ring-purple-500 resize-none bg-gray-50 hover:bg-white"
-            placeholder="Enter the initial prompt for this agent"
-          />
-        </div>
-
-        {/* Tools (Tool Execution only) - EXPANDED */}
-        {node.type === 'tool_execution' && isExpanded && (
-          <div>
-            <label className="block text-xs font-medium text-gray-600 mb-2">Tools</label>
-            <div className="grid grid-cols-2 gap-1 mb-2">
-              {AVAILABLE_TOOLS.map(tool => (
-                <label key={tool} className="flex items-center space-x-1 p-1 hover:bg-gray-100 rounded">
-                  <input
-                    type="checkbox"
-                    checked={node.tools.includes(tool)}
-                    onChange={() => toggleTool(tool)}
-                    onClick={(e) => e.stopPropagation()}
-                    className="w-3 h-3 rounded border-gray-300 text-purple-600 focus:ring-purple-500"
-                  />
-                  <span className="text-xs text-gray-700">{tool.replace('_tool', '')}</span>
+        {node.type === 'tool_execution' && (
+             <div>
+                <label className="block text-xs font-medium text-gray-500 mb-2">Tools</label>
+                <div className="grid grid-cols-2 gap-2">
+                    {AVAILABLE_TOOLS.map(tool => (
+                        <label key={tool} className="flex items-center space-x-2 p-1.5 hover:bg-gray-100 rounded-md cursor-pointer">
+                            <input type="checkbox" checked={node.tools.includes(tool)} onChange={() => toggleTool(tool)} onClick={e => e.stopPropagation()} className="w-4 h-4 rounded border-gray-300 text-purple-600 focus:ring-purple-500" />
+                            <span className="text-sm text-gray-700">{tool.replace('_tool', '')}</span>
+                        </label>
+                    ))}
+                </div>
+                <label className="flex items-center space-x-2 p-1.5 hover:bg-gray-100 rounded-md cursor-pointer mt-2">
+                    <input type="checkbox" checked={node.force_tool_call} onChange={e => onUpdate({ ...node, force_tool_call: e.target.checked })} onClick={e => e.stopPropagation()} className="w-4 h-4 rounded border-gray-300 text-purple-600 focus:ring-purple-500" />
+                    <span className="text-sm font-medium text-gray-700">Force Tool Call</span>
                 </label>
-              ))}
-            </div>
-            <label className="flex items-center space-x-2 p-1 hover:bg-gray-100 rounded">
-              <input
-                type="checkbox"
-                checked={node.force_tool_call}
-                onChange={(e) => onUpdate({ ...node, force_tool_call: e.target.checked })}
-                onClick={(e) => e.stopPropagation()}
-                className="w-3 h-3 rounded border-gray-300 text-purple-600 focus:ring-purple-500"
-              />
-              <span className="text-xs font-medium text-gray-700">Force Tool Call</span>
-            </label>
-          </div>
+             </div>
         )}
+      </div>
 
-        {/* Transitions - EXPANDED */}
-        {isExpanded && (
-            <div>
-            <div className="flex items-center justify-between mb-2">
-                <label className="block text-xs font-medium text-gray-600">Transitions</label>
-                <button
-                onClick={(e) => {
-                    e.stopPropagation();
-                    addTransition();
-                }}
-                className="flex items-center space-x-1 px-2 py-1 text-xs bg-purple-100 text-purple-700 rounded hover:bg-purple-200"
-                >
-                <Plus className="w-3 h-3" />
-                <span>Add</span>
-                </button>
-            </div>
-
-            <div className="space-y-2 max-h-32 overflow-y-auto">
-                {transitionEntries.map(([condition, targetName]) => (
-                <div key={condition} className="relative group">
-                    <div className="flex items-center space-x-2 bg-gray-50 p-2 rounded pr-8">
-                    <input
-                        type="text"
-                        value={condition}
-                        onChange={(e) => updateTransitionCondition(condition, e.target.value)}
-                        onClick={(e) => e.stopPropagation()}
-                        placeholder="Condition"
-                        className="flex-1 px-2 py-1 text-xs border border-gray-300 rounded focus:ring-1 focus:ring-purple-500"
-                    />
-                    <button
-                        onClick={(e) => {
-                        e.stopPropagation();
-                        removeTransition(condition);
-                        }}
-                        className="p-1 text-gray-400 hover:text-red-600"
-                        title="Remove transition"
-                    >
-                        <Trash2 className="w-3 h-3" />
-                    </button>
-                    </div>
-                    
-                    <div 
-                        ref={(el) => registerOutputTerminal(condition, el)}
-                        className="absolute right-0 top-1/2 -translate-x-1/2 -translate-y-1/2 w-6 h-6 z-10"
-                        onMouseDown={(e) => handleTerminalMouseDown(condition, e)}
-                    >
-                        <div className={`w-full h-full rounded-full border-2 border-white shadow-lg flex items-center justify-center transition-all cursor-pointer hover:scale-110 ${
-                            targetName 
-                            ? 'bg-green-500 hover:bg-green-600' 
-                            : 'bg-purple-500 hover:bg-purple-600'
-                        }`}>
-                        </div>
+      <div className="px-4 pb-4">
+        <div className="flex items-center justify-between mb-2">
+            <label className="block text-xs font-medium text-gray-500">Transitions</label>
+            <button onClick={e => { e.stopPropagation(); addTransition(); }} className="flex items-center space-x-1.5 px-2 py-1 text-xs bg-purple-100 text-purple-700 rounded-md hover:bg-purple-200 font-semibold"><Plus className="w-3 h-3" /><span>Add</span></button>
+        </div>
+        <div className="space-y-2">
+            {transitionEntries.length > 0 ? transitionEntries.map(([condition, targetName]) => (
+                <div key={condition} className="relative flex items-center justify-between bg-gray-100 p-2 rounded-lg group">
+                    <input type="text" value={condition} onBlur={e => updateTransitionCondition(condition, e.target.value)} onChange={e => e.stopPropagation()} onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur()}} onClick={e => e.stopPropagation()} className="flex-1 text-sm bg-transparent outline-none focus:bg-white px-1 py-0.5 rounded-md"/>
+                    <button onClick={() => removeTransition(condition)} className="p-1 text-gray-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 className="w-3.5 h-3.5" /></button>
+                    <div ref={el => registerOutputTerminal(condition, el)} className="absolute right-0 top-1/2 translate-x-1/2 -translate-y-1/2 w-6 h-6 z-10" onMouseDown={e => handleTerminalMouseDown(condition, e)}>
+                        <div className={`w-full h-full rounded-full border-2 border-white shadow-md flex items-center justify-center transition-all cursor-pointer group-hover:scale-125 ${targetName ? 'bg-green-500 group-hover:bg-green-600' : 'bg-purple-500 group-hover:bg-purple-600'}`} />
                     </div>
                 </div>
-                ))}
-            </div>
-
-            {transitionEntries.length === 0 && (
-                <p className="text-xs text-gray-500 italic py-2">No transitions defined.</p>
-            )}
-            </div>
-        )}
-
-        {/* Summary when collapsed */}
-        {!isExpanded && (
-          <div className="text-xs text-gray-500 space-y-1 pt-2 border-t border-gray-100">
-            {node.type === 'tool_execution' && node.tools.length > 0 && (
-              <p>Tools: <span className='font-medium text-gray-600'>{node.tools.length}</span></p>
-            )}
-            {transitionEntries.length > 0 && (
-              <p>Transitions: <span className='font-medium text-gray-600'>{transitionEntries.length}</span></p>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* Output connection terminals for collapsed view */}
-      {!isExpanded && transitionEntries.length > 0 && (
-        <div className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-1/2 flex flex-col space-y-2 z-10">
-          {transitionEntries.map(([condition, targetName]) => (
-            <div 
-              key={condition}
-              ref={(el) => registerOutputTerminal(condition, el)}
-              className="group w-6 h-6 flex items-center justify-center"
-              onMouseDown={(e) => handleTerminalMouseDown(condition, e)}
-            >
-              <div className={`w-4 h-4 rounded-full border-2 border-white shadow-md flex items-center justify-center transition-all cursor-pointer group-hover:scale-125 ${
-                targetName 
-                  ? 'bg-green-500 group-hover:bg-green-600' 
-                  : 'bg-purple-500 group-hover:bg-purple-600'
-              }`}>
-              </div>
-            </div>
-          ))}
+            )) : <div className="text-center py-2"><p className="text-sm text-gray-400 italic">No transitions.</p></div>}
         </div>
-      )}
+      </div>
+      
+      <div className="border-t border-gray-200 flex justify-center mt-auto">
+        <button onClick={e => { e.stopPropagation(); setIsExpanded(!isExpanded); }} className="py-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 w-full" title={isExpanded ? 'Collapse' : 'Expand'}>
+            {isExpanded ? <ChevronsUp className="w-5 h-5 mx-auto" /> : <ChevronsDown className="w-5 h-5 mx-auto" />}
+        </button>
+      </div>
     </div>
   );
 };
