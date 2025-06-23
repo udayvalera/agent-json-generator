@@ -14,6 +14,7 @@ interface WorkflowNodeProps {
   onStartConnection: (nodeId: string, condition: string) => void;
   onEndConnection: (nodeId: string) => void;
   onMouseDown: (e: React.MouseEvent) => void;
+  dragOffset?: { x: number; y: number } | null;
   connectionInProgress: boolean;
   isDragging: boolean;
   registerInputTerminal: (el: HTMLDivElement | null) => void;
@@ -31,6 +32,7 @@ export const WorkflowNode: React.FC<WorkflowNodeProps> = ({
   onUpdate,
   onStartConnection,
   onEndConnection,
+  dragOffset,
   onMouseDown,
   connectionInProgress,
   isDragging,
@@ -41,10 +43,8 @@ export const WorkflowNode: React.FC<WorkflowNodeProps> = ({
   const [editingName, setEditingName] = useState(false);
   const [tempName, setTempName] = useState(node.name);
   const [nameError, setNameError] = useState('');
-
   const isConversational = node.type === 'conversational';
   const transitionEntries = Object.entries(node.transitions);
-
   const nodeColors = {
     conversational: {
       bg: 'bg-blue-50',
@@ -76,7 +76,6 @@ export const WorkflowNode: React.FC<WorkflowNodeProps> = ({
     setNameError('');
     setEditingName(false);
   };
-  
   const handleNameKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
       validateAndSaveName();
@@ -86,7 +85,6 @@ export const WorkflowNode: React.FC<WorkflowNodeProps> = ({
       setEditingName(false);
     }
   };
-
   const addTransition = () => {
     const newCondition = 'new_condition';
     let i = 1;
@@ -95,18 +93,16 @@ export const WorkflowNode: React.FC<WorkflowNodeProps> = ({
     }
     onUpdate({ ...node, transitions: { ...node.transitions, [`${newCondition}_${i}`]: '' } });
   };
-  
   const updateTransitionCondition = (oldCondition: string, newCondition: string) => {
     if (oldCondition === newCondition) return;
     const newTransitions = { ...node.transitions };
     const target = newTransitions[oldCondition];
     delete newTransitions[oldCondition];
     if(newCondition) {
-        newTransitions[newCondition] = target;
+      newTransitions[newCondition] = target;
     }
     onUpdate({ ...node, transitions: newTransitions });
   };
-
   const removeTransition = (condition: string) => {
     const { [condition]: _, ...rest } = node.transitions;
     onUpdate({ ...node, transitions: rest });
@@ -119,12 +115,25 @@ export const WorkflowNode: React.FC<WorkflowNodeProps> = ({
     onUpdate({ ...node, tools: newTools });
   };
 
+  // --- SMOOTH DRAGGING STYLE CALCULATION ---
+  const style: React.CSSProperties = {
+    // Base position from the node's stored position
+    top: `${node.position.y}px`,
+    left: `${node.position.x}px`,
+    pointerEvents: 'auto',
+    // Apply smooth CSS transform during drag for GPU acceleration
+    transform: (isDragging && dragOffset)
+      ? `translate(${dragOffset.x}px, ${dragOffset.y}px)`
+      : 'none',
+    // Add smooth transition when not dragging for polished feel
+    transition: isDragging ? 'none' : 'transform 0.1s ease-out',
+  };
+
   const handleTerminalMouseDown = (condition: string, e: React.MouseEvent) => {
     e.stopPropagation();
     e.preventDefault();
     onStartConnection(node.id, condition);
   };
-
   const handleNodeClick = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (connectionInProgress) {
@@ -133,11 +142,10 @@ export const WorkflowNode: React.FC<WorkflowNodeProps> = ({
       onClick();
     }
   };
-  
   return (
     <div
       className={`absolute bg-white rounded-xl transition-all duration-150 flex flex-col ${isDragging ? `shadow-2xl scale-105 z-50 ${colors.shadow}` : `shadow-lg ${colors.shadow}`} ${isSelected ? `border-2 ${colors.border}` : 'border border-gray-200'} w-80`}
-      style={{ left: node.position.x, top: node.position.y }}
+      style={style}
       onClick={handleNodeClick}
     >
       {isStartNode && <div className="absolute -top-3 -left-3 bg-green-500 text-white rounded-full p-1.5 z-20 shadow-md border-2 border-white"><Play className="w-4 h-4" /></div>}

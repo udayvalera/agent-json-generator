@@ -6,6 +6,14 @@ import { AgentNode, ConnectionInProgress } from '../types/workflow';
 // A type for our map of terminal positions
 type TerminalPositionMap = Map<string, { x: number; y: number }>;
 
+// New type for the state of a dragged node
+interface DraggedNodeState {
+  nodeId: string;
+  initialNodePosition: { x: number; y: number };
+  initialMousePosition: { x: number; y: number };
+  currentOffset: { x: number; y: number };
+}
+
 interface CanvasProps {
   nodes: AgentNode[];
   selectedNodeId: string | null;
@@ -13,8 +21,8 @@ interface CanvasProps {
   onNodeClick: (nodeId: string) => void;
   onNodeDelete: (nodeId: string) => void;
   onNodeDrop: (position: { x: number; y: number }, nodeType: 'conversational' | 'tool_execution') => void;
-  onSetStartNode: (nodeId: string) => void;
   onNodeUpdate: (updatedNode: AgentNode) => void;
+  onSetStartNode: (nodeName: string) => void;
 }
 
 export const Canvas: React.FC<CanvasProps> = ({
@@ -33,14 +41,13 @@ export const Canvas: React.FC<CanvasProps> = ({
   const [canvasOffset, setCanvasOffset] = useState({ x: 0, y: 0 });
   const [isDraggingCanvas, setIsDraggingCanvas] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
-  const [draggedNode, setDraggedNode] = useState<{ nodeId: string; offset: { x: number; y: number } } | null>(null);
   
-  // State to hold the measured positions of all terminals
-  const [terminalPositions, setTerminalPositions] = useState<TerminalPositionMap>(new Map());
-  // Ref to hold the actual DOM elements of the terminals
+  // Updated dragged node state to include current offset for smooth transforms
+  const [draggedNode, setDraggedNode] = useState<DraggedNodeState | null>(null);
+  
+  const terminalPositions = useRef<Map<string, { x: number; y: number }>>(new Map());
   const terminalElements = useRef<Map<string, HTMLElement | null>>(new Map());
 
-  // Callback ref function to register a terminal element
   const registerTerminal = (key: string, el: HTMLElement | null) => {
     if (el) {
         terminalElements.current.set(key, el);
@@ -48,25 +55,23 @@ export const Canvas: React.FC<CanvasProps> = ({
         terminalElements.current.delete(key);
     }
   };
-  
-  // This effect measures the real position of each terminal after every render/pan
+
   useLayoutEffect(() => {
-    const newPositions: TerminalPositionMap = new Map();
+    const newPositions: Map<string, { x: number; y: number }> = new Map();
     const canvasRect = canvasRef.current?.getBoundingClientRect();
     if (!canvasRect) return;
 
     terminalElements.current.forEach((el, key) => {
       if (el) {
         const rect = el.getBoundingClientRect();
-        // Calculate center position relative to the canvas's content area
         const x = rect.left - canvasRect.left + rect.width / 2 - canvasOffset.x;
         const y = rect.top - canvasRect.top + rect.height / 2 - canvasOffset.y;
         newPositions.set(key, { x, y });
       }
     });
-
-    setTerminalPositions(newPositions);
-  }, [nodes, canvasOffset, draggedNode, selectedNodeId]); // Re-calculate on node changes, pan, or drag
+    
+    terminalPositions.current = newPositions;
+  }, [nodes, canvasOffset, selectedNodeId, draggedNode]); // Added draggedNode to deps
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
@@ -87,10 +92,9 @@ export const Canvas: React.FC<CanvasProps> = ({
     if (!rect) return;
 
     const position = {
-      x: e.clientX - rect.left - canvasOffset.x - 128, // Center the node and account for canvas offset
+      x: e.clientX - rect.left - canvasOffset.x - 128,
       y: e.clientY - rect.top - canvasOffset.y - 80
     };
-
     try {
       const data = JSON.parse(e.dataTransfer.getData('application/json'));
       onNodeDrop(position, data.nodeType);
@@ -108,29 +112,31 @@ export const Canvas: React.FC<CanvasProps> = ({
   };
 
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
+    // Canvas Panning Logic
     if (isDraggingCanvas) {
       const newOffset = {
         x: e.clientX - dragStart.x,
         y: e.clientY - dragStart.y
       };
       setCanvasOffset(newOffset);
-    } else if (draggedNode) {
-      const rect = canvasRef.current?.getBoundingClientRect();
-      if (rect) {
-        const newPosition = {
-          x: e.clientX - rect.left - canvasOffset.x - draggedNode.offset.x,
-          y: e.clientY - rect.top - canvasOffset.y - draggedNode.offset.y
-        };
-        
-        const node = nodes.find(n => n.id === draggedNode.nodeId);
-        if (node) {
-          onNodeUpdate({
-            ...node,
-            position: newPosition
-          });
-        }
-      }
-    } else if (connectionInProgress) {
+      return;
+    }
+    
+    // Node Dragging Logic - now with smooth transforms
+    if (draggedNode) {
+      const deltaX = e.clientX - draggedNode.initialMousePosition.x;
+      const deltaY = e.clientY - draggedNode.initialMousePosition.y;
+      
+      // Update the current offset for smooth CSS transform
+      setDraggedNode(prev => prev ? {
+        ...prev,
+        currentOffset: { x: deltaX, y: deltaY }
+      } : null);
+      return;
+    }
+
+    // Connection Logic
+    if (connectionInProgress) {
       const rect = canvasRef.current?.getBoundingClientRect();
       if (rect) {
         setConnectionInProgress(prev => prev ? {
@@ -142,17 +148,28 @@ export const Canvas: React.FC<CanvasProps> = ({
         } : null);
       }
     }
-  }, [isDraggingCanvas, dragStart, canvasOffset, draggedNode, connectionInProgress, nodes, onNodeUpdate]);
-
+  }, [isDraggingCanvas, dragStart, draggedNode, connectionInProgress]);
+  
   const handleMouseUp = () => {
+    // If we were dragging a node, commit its final position to the global state
+    if (draggedNode) {
+      const node = nodes.find(n => n.id === draggedNode.nodeId);
+      if (node) {
+        const finalPosition = {
+          x: draggedNode.initialNodePosition.x + draggedNode.currentOffset.x,
+          y: draggedNode.initialNodePosition.y + draggedNode.currentOffset.y
+        };
+        onNodeUpdate({ ...node, position: finalPosition });
+      }
+    }
+
     setIsDraggingCanvas(false);
     setDraggedNode(null);
   };
-  
+
   const handleStartConnection = (nodeId: string, condition: string) => {
     const startKey = `output-${nodeId}-${condition}`;
-    const startPosition = terminalPositions.get(startKey);
-
+    const startPosition = terminalPositions.current.get(startKey);
     if (startPosition) {
       setConnectionInProgress({
         fromNodeId: nodeId,
@@ -181,29 +198,28 @@ export const Canvas: React.FC<CanvasProps> = ({
     }
     setConnectionInProgress(null);
   };
-
+  
   const handleCanvasClick = (e: React.MouseEvent) => {
-    if (e.target === canvasRef.current && !isDraggingCanvas) {
+    if (e.target === canvasRef.current) {
       setConnectionInProgress(null);
-      onNodeClick(''); // Deselect all nodes
+      onNodeClick('');
     }
   };
 
   const handleNodeMouseDown = (nodeId: string, e: React.MouseEvent) => {
-    const rect = canvasRef.current?.getBoundingClientRect();
     const node = nodes.find(n => n.id === nodeId);
-    if (rect && node) {
-      const offset = {
-        x: e.clientX - rect.left - canvasOffset.x - node.position.x,
-        y: e.clientY - rect.top - canvasOffset.y - node.position.y
-      };
-      setDraggedNode({ nodeId, offset });
+    if (node && !connectionInProgress) {
+      setDraggedNode({
+        nodeId,
+        initialNodePosition: node.position,
+        initialMousePosition: { x: e.clientX, y: e.clientY },
+        currentOffset: { x: 0, y: 0 } // Start with no offset
+      });
       e.preventDefault();
       e.stopPropagation();
     }
   };
 
-  // Generate connection line data from the measured positions
   const connections = nodes.flatMap(sourceNode =>
     Object.entries(sourceNode.transitions).map(([condition, targetName]) => {
       const targetNode = nodes.find(n => n.name === targetName);
@@ -212,8 +228,8 @@ export const Canvas: React.FC<CanvasProps> = ({
       const fromKey = `output-${sourceNode.id}-${condition}`;
       const toKey = `input-${targetNode.id}`;
       
-      const fromPos = terminalPositions.get(fromKey);
-      const toPos = terminalPositions.get(toKey);
+      const fromPos = terminalPositions.current.get(fromKey);
+      const toPos = terminalPositions.current.get(toKey);
 
       if (!fromPos || !toPos) return null;
 
@@ -239,7 +255,6 @@ export const Canvas: React.FC<CanvasProps> = ({
       onMouseUp={handleMouseUp}
       onClick={handleCanvasClick}
     >
-      {/* Grid background */}
       <div 
         className="absolute inset-0 opacity-30 pointer-events-none"
         style={{
@@ -252,28 +267,16 @@ export const Canvas: React.FC<CanvasProps> = ({
         }}
       />
 
-      {/* Canvas content container */}
       <div 
-        className="absolute inset-0"
+        className="absolute inset-0 pointer-events-none"
         style={{
           transform: `translate(${canvasOffset.x}px, ${canvasOffset.y}px)`
         }}
       >
-        {/* Connection lines */}
         <svg className="absolute inset-0 w-full h-full pointer-events-none overflow-visible">
           <defs>
-            <marker
-              id="arrowhead"
-              markerWidth="10"
-              markerHeight="7"
-              refX="9"
-              refY="3.5"
-              orient="auto"
-            >
-              <polygon
-                points="0 0, 10 3.5, 0 7"
-                fill="#8B5CF6"
-              />
+            <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+              <polygon points="0 0, 10 3.5, 0 7" fill="#8B5CF6"/>
             </marker>
           </defs>
           
@@ -286,7 +289,6 @@ export const Canvas: React.FC<CanvasProps> = ({
             />
           ))}
           
-          {/* Connection in progress */}
           {connectionInProgress && (
             <ConnectionLine
               from={connectionInProgress.startPosition}
@@ -297,11 +299,11 @@ export const Canvas: React.FC<CanvasProps> = ({
           )}
         </svg>
 
-        {/* Nodes */}
         {nodes.map(node => (
           <WorkflowNode
             key={node.id}
             node={node}
+            nodes={nodes}
             isSelected={selectedNodeId === node.id}
             isStartNode={startNodeId === node.name}
             onClick={() => onNodeClick(node.id)}
@@ -310,7 +312,8 @@ export const Canvas: React.FC<CanvasProps> = ({
             onUpdate={onNodeUpdate}
             onStartConnection={handleStartConnection}
             onEndConnection={handleEndConnection}
-            onMouseDown={(e) => handleNodeMouseDown(node.id, e)}
+            onMouseDown={(e: React.MouseEvent) => handleNodeMouseDown(node.id, e)}
+            dragOffset={draggedNode?.nodeId === node.id ? draggedNode.currentOffset : null}
             connectionInProgress={!!connectionInProgress}
             isDragging={!!draggedNode && draggedNode.nodeId === node.id}
             registerInputTerminal={(el) => registerTerminal(`input-${node.id}`, el as HTMLDivElement)}
@@ -319,7 +322,6 @@ export const Canvas: React.FC<CanvasProps> = ({
         ))}
       </div>
 
-      {/* Drop hint */}
       {isDragOver && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-50">
           <div className="bg-white/90 backdrop-blur-sm p-6 rounded-lg border-2 border-dashed border-blue-400">
@@ -338,7 +340,6 @@ export const Canvas: React.FC<CanvasProps> = ({
         </div>
       )}
 
-      {/* Connection instructions */}
       {connectionInProgress && (
         <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-purple-100 text-purple-800 px-4 py-2 rounded-lg shadow-lg border border-purple-200 z-50">
           <p className="text-sm font-medium">Click on a target node to complete the connection</p>
@@ -346,7 +347,6 @@ export const Canvas: React.FC<CanvasProps> = ({
         </div>
       )}
 
-      {/* Canvas controls hint */}
       <div className="absolute bottom-4 right-4 bg-white/90 backdrop-blur-sm px-3 py-2 rounded-lg shadow-md border border-gray-200 text-xs text-gray-600">
         <p>Click & drag canvas to pan • Click & drag nodes to move</p>
       </div>

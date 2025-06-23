@@ -1,19 +1,18 @@
-import React, { useRef } from 'react';
+import React, { useRef, useState } from 'react';
 import { NodePalette } from './components/NodePalette';
-import { Canvas } from './components/Canvas';
+import { Canvas } from './components/Canvas'; 
 import { Toolbar } from './components/Toolbar';
 import { useWorkflow } from './hooks/useWorkflow';
+import { JsonViewPanel } from './components/JsonViewPanel';
 
 function App() {
   const fileInputRef = useRef<HTMLInputElement>(null);
-  
   const {
     nodes,
     selectedNodeId,
     startNodeId,
     setSelectedNodeId,
     setStartNodeId,
-    setDraggedNodeType,
     addNode,
     updateNode,
     deleteNode,
@@ -22,7 +21,8 @@ function App() {
     importWorkflow,
     validateWorkflow
   } = useWorkflow();
-
+  const [isJsonPanelVisible, setIsJsonPanelVisible] = useState(false);
+  
   const handleExport = () => {
     const workflow = exportWorkflow();
     const dataStr = JSON.stringify({ agent_graph: workflow }, null, 2);
@@ -37,7 +37,7 @@ function App() {
 
   const handleImport = () => {
     fileInputRef.current?.click();
-  };
+  }; 
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -62,7 +62,7 @@ function App() {
 
   const handleValidate = () => {
     const errors = validateWorkflow();
-    if (errors.length === 0) {
+    if (errors.length === 0) { 
       alert('Workflow validation passed! ✅');
     } else {
       alert('Validation errors:\n\n' + errors.join('\n'));
@@ -70,7 +70,7 @@ function App() {
   };
 
   const handleClear = () => {
-    if (confirm('Are you sure you want to clear all nodes? This cannot be undone.')) {
+    if (confirm('Are you sure you want to clear all nodes? This cannot be undone.')) { 
       clearAll();
     }
   };
@@ -83,10 +83,13 @@ function App() {
         onClear={handleClear}
         onValidate={handleValidate}
         hasNodes={nodes.length > 0}
+        isJsonPanelVisible={isJsonPanelVisible}
+        onToggleJsonPanel={() => setIsJsonPanelVisible(!isJsonPanelVisible)}
       />
       
       <div className="flex-1 flex overflow-hidden">
-        <NodePalette onDragStart={setDraggedNodeType} />
+ 
+        <NodePalette onDragStart={(e, nodeType) => e.dataTransfer.setData('application/json', JSON.stringify({ nodeType }))} /> 
         
         <Canvas
           nodes={nodes}
@@ -95,10 +98,18 @@ function App() {
           onNodeClick={setSelectedNodeId}
           onNodeDelete={deleteNode}
           onNodeDrop={addNode}
-          onSetStartNode={setStartNodeId}
+          onSetStartNode={(nodeName) => setStartNodeId(nodeName)} 
           onNodeUpdate={updateNode}
         />
-      </div>
+        
+        <JsonViewPanel
+          isVisible={isJsonPanelVisible}
+          onClose={() => setIsJsonPanelVisible(false)}
+          workflowJson={exportWorkflow()}
+          onJsonChange={importWorkflow}
+        />
+     
+      </div> 
 
       <input
         ref={fileInputRef}

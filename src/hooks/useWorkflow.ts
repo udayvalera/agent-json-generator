@@ -4,7 +4,7 @@ import { AgentNode } from '../types/workflow';
 // Define the shape of the data in the exported/imported JSON file.
 // Notice that the agent data itself does not contain the name.
 type ExportedAgentData = Omit<AgentNode, 'id' | 'position' | 'name'>;
-interface ExportedWorkflow {
+export interface ExportedWorkflow {
   start_node: string;
   agents: Record<string, ExportedAgentData>;
 }
@@ -134,33 +134,53 @@ export const useWorkflow = () => {
         alert("Import failed: Invalid JSON structure.");
         return;
     }
-
-    const nodeNames = Object.keys(agent_graph.agents);
-    const cols = Math.ceil(Math.sqrt(nodeNames.length) || 1);
     
-    const importedNodes: AgentNode[] = nodeNames.map((name, index) => {
-      const agentData = agent_graph.agents[name];
-      const row = Math.floor(index / cols);
-      const col = index % cols;
-      
-      // Explicitly construct the AgentNode to ensure correct structure
-      const newNode: AgentNode = {
-        id: crypto.randomUUID(),
-        name: name, // Name comes from the key
-        type: agentData.type,
-        initial_prompt: agentData.initial_prompt,
-        tools: agentData.tools,
-        force_tool_call: agentData.force_tool_call,
-        transitions: agentData.transitions,
-        position: {
-          x: 100 + col * 400, // Increased horizontal spacing
-          y: 100 + row * 350
-        }
-      };
-      return newNode;
-    });
+    const nodeNames = Object.keys(agent_graph.agents);
+    const existingNodesMap = new Map(nodes.map(node => [node.name, node]));
+    const updatedNodes: AgentNode[] = [];
+    const usedIds = new Set<string>();
 
-    setNodes(importedNodes);
+    // Process nodes from the imported graph
+    nodeNames.forEach((name, index) => {
+      const agentData = agent_graph.agents[name];
+      const existingNode = existingNodesMap.get(name);
+
+      if (existingNode) {
+        // Update existing node, preserving its ID and position
+        const updatedNode: AgentNode = {
+          ...existingNode,
+          ...agentData,
+          name: name, // Ensure name is correct
+        };
+        updatedNodes.push(updatedNode);
+        usedIds.add(existingNode.id);
+      } else {
+        // It's a new node, create it with a new ID and calculated position
+        const cols = Math.ceil(Math.sqrt(nodes.length || 1));
+        const row = Math.floor(index / cols);
+        const col = index % cols;
+
+        const newNode: AgentNode = {
+          id: crypto.randomUUID(),
+          name: name,
+          type: agentData.type,
+          initial_prompt: agentData.initial_prompt,
+          tools: agentData.tools,
+          force_tool_call: agentData.force_tool_call,
+          transitions: agentData.transitions,
+          position: {
+            x: 100 + col * 400,
+            y: 100 + row * 350
+          }
+        };
+        updatedNodes.push(newNode);
+        usedIds.add(newNode.id);
+      }
+    });
+    
+    // The nodes are now the updated/new nodes. Any node from the old state that wasn't in the new
+    // agent_graph is implicitly removed.
+    setNodes(updatedNodes);
     setStartNodeId(agent_graph.start_node);
     setSelectedNodeId(null);
   }, []);
