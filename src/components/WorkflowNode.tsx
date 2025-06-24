@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { MessageCircle, Cog, Play, Trash2, Plus, ChevronsDown, ChevronsUp, Move, Check, X as IconX, ZoomIn, ZoomOut } from 'lucide-react';
+import { MessageCircle, Cog, Play, Trash2, Plus, ChevronsDown, ChevronsUp, Move} from 'lucide-react';
 import { AgentNode, AVAILABLE_TOOLS } from '../types/workflow';
 
 interface WorkflowNodeProps {
