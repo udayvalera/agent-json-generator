@@ -3,7 +3,8 @@ import React, { useState, useEffect } from 'react';
 import Editor from 'react-simple-code-editor';
 import { highlight, languages } from 'prismjs/components/prism-core';
 import 'prismjs/components/prism-json';
-import 'prismjs/themes/prism.css'; // You can choose a different theme
+import 'prismjs/themes/prism.css';
+// You can choose a different theme
 import { X } from 'lucide-react';
 import { ExportedWorkflow } from '../hooks/useWorkflow';
 
@@ -36,12 +37,10 @@ export const JsonViewPanel: React.FC<JsonViewPanelProps> = ({ workflowJson, onJs
       setJsonString(JSON.stringify(workflowJson, null, 2));
     }
   }, [workflowJson, isVisible]);
-
   const handleJsonChange = (newJson: string) => {
     setJsonString(newJson);
     validateAndSync(newJson);
   };
-  
   const validateAndSync = debounce((newJson: string) => {
     try {
       const parsedJson = JSON.parse(newJson);
@@ -49,6 +48,7 @@ export const JsonViewPanel: React.FC<JsonViewPanelProps> = ({ workflowJson, onJs
       setError(null);
     } catch (e) {
       setError('Invalid JSON format.');
+      console.error('JSON parsing error:', e);
     }
   }, 500); // 500ms debounce
 
@@ -64,15 +64,17 @@ export const JsonViewPanel: React.FC<JsonViewPanelProps> = ({ workflowJson, onJs
       </div>
 
       <div className="flex-1 overflow-y-auto font-mono text-sm relative">
-        <Editor
+  
+       <Editor
           value={jsonString}
           onValueChange={handleJsonChange}
           highlight={code => highlight(code, languages.json, 'json')}
           padding={16}
-          className="bg-gray-50 h-full"
+          className="bg-gray-50"
           style={{
             fontFamily: '"Fira Code", "Fira Mono", monospace',
             fontSize: 14,
+            minHeight: '100%',
           }}
         />
       </div>
@@ -84,6 +86,7 @@ export const JsonViewPanel: React.FC<JsonViewPanelProps> = ({ workflowJson, onJs
           <p className="text-sm text-green-600 px-2">JSON is valid.</p>
         )}
       </div>
+   
     </div>
   );
 };

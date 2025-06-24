@@ -3,7 +3,6 @@ import { WorkflowNode } from './WorkflowNode';
 import { ConnectionLine } from './ConnectionLine';
 import { AgentNode, ConnectionInProgress } from '../types/workflow';
 import { ZoomIn, ZoomOut } from 'lucide-react';
-type TerminalPositionMap = Map<string, { x: number; y: number }>;
 interface DraggedNodeState {
   nodeId: string;
   initialNodePosition: { x: number;
