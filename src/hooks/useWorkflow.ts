@@ -140,26 +140,118 @@ export const useWorkflow = () => {
     const updatedNodes: AgentNode[] = [];
     const usedIds = new Set<string>();
 
-    // Process nodes from the imported graph
-    nodeNames.forEach((name, index) => {
+    // Build adjacency list for the graph
+    const adjacencyList = new Map<string, string[]>();
+    nodeNames.forEach(name => {
+      adjacencyList.set(name, []);
+    });
+    
+    // Populate adjacency list based on transitions
+    nodeNames.forEach(name => {
+      const agentData = agent_graph.agents[name];
+      const transitions = Object.values(agentData.transitions || {});
+      transitions.forEach(targetName => {
+        if (typeof targetName === 'string' && adjacencyList.has(targetName)) {
+          const neighbors = adjacencyList.get(name) || [];
+          if (!neighbors.includes(targetName)) {
+            neighbors.push(targetName);
+          }
+        }
+      });
+    });
+
+    // Calculate hierarchical levels using BFS from start node
+    const levels = new Map<string, number>();
+    const orphanedNodes = new Set<string>(nodeNames);
+    
+    if (agent_graph.start_node && adjacencyList.has(agent_graph.start_node)) {
+      const queue: Array<{ node: string; level: number }> = [{ node: agent_graph.start_node, level: 0 }];
+      const visited = new Set<string>();
+      
+      while (queue.length > 0) {
+        const { node, level } = queue.shift()!;
+        
+        if (visited.has(node)) continue;
+        visited.add(node);
+        orphanedNodes.delete(node);
+        
+        levels.set(node, level);
+        
+        const neighbors = adjacencyList.get(node) || [];
+        neighbors.forEach(neighbor => {
+          if (!visited.has(neighbor)) {
+            queue.push({ node: neighbor, level: level + 1 });
+          }
+        });
+      }
+    }
+
+    // Group nodes by level
+    const nodesByLevel = new Map<number, string[]>();
+    levels.forEach((level, nodeName) => {
+      if (!nodesByLevel.has(level)) {
+        nodesByLevel.set(level, []);
+      }
+      nodesByLevel.get(level)!.push(nodeName);
+    });
+
+    // Calculate positions for connected nodes
+    const nodePositions = new Map<string, { x: number; y: number }>();
+    const levelSpacing = 400; // Horizontal spacing between levels
+    const nodeSpacing = 350;  // Vertical spacing between nodes in same level
+    const startX = 100;
+    const startY = 100;
+
+    // Position connected nodes level by level (horizontal flow)
+    const sortedLevels = Array.from(nodesByLevel.keys()).sort((a, b) => a - b);
+    sortedLevels.forEach(level => {
+      const nodesInLevel = nodesByLevel.get(level)!;
+      const levelHeight = (nodesInLevel.length - 1) * nodeSpacing;
+      const levelStartY = startY - levelHeight / 2;
+      
+      nodesInLevel.forEach((nodeName, index) => {
+        nodePositions.set(nodeName, {
+          x: startX + level * levelSpacing,
+          y: levelStartY + index * nodeSpacing
+        });
+      });
+    });
+
+    // Position orphaned nodes to the right of the main graph
+    const orphanedArray = Array.from(orphanedNodes);
+    if (orphanedArray.length > 0) {
+      const maxLevel = Math.max(...Array.from(levels.values()), -1);
+      const orphanStartX = startX + (maxLevel + 2) * levelSpacing;
+      const orphanRows = Math.ceil(Math.sqrt(orphanedArray.length));
+      
+      orphanedArray.forEach((nodeName, index) => {
+        const row = index % orphanRows;
+        const col = Math.floor(index / orphanRows);
+        nodePositions.set(nodeName, {
+          x: orphanStartX + col * levelSpacing,
+          y: startY + row * nodeSpacing
+        });
+      });
+    }
+
+    // Process nodes from the imported graph with calculated positions
+    nodeNames.forEach((name) => {
       const agentData = agent_graph.agents[name];
       const existingNode = existingNodesMap.get(name);
+      const calculatedPosition = nodePositions.get(name) || { x: startX, y: startY };
 
       if (existingNode) {
-        // Update existing node, preserving its ID and position
+        // Update existing node, preserving its ID but using calculated position
         const updatedNode: AgentNode = {
           ...existingNode,
           ...agentData,
           name: name, // Ensure name is correct
+          position: calculatedPosition
         };
         updatedNodes.push(updatedNode);
         usedIds.add(existingNode.id);
       } else {
-        // It's a new node, create it with a new ID and calculated position
-        const cols = Math.ceil(Math.sqrt(nodes.length || 1));
-        const row = Math.floor(index / cols);
-        const col = index % cols;
-
+        // It's a new node, create it with calculated position
         const newNode: AgentNode = {
           id: crypto.randomUUID(),
           name: name,
@@ -168,10 +260,7 @@ export const useWorkflow = () => {
           tools: agentData.tools,
           force_tool_call: agentData.force_tool_call,
           transitions: agentData.transitions,
-          position: {
-            x: 100 + col * 400,
-            y: 100 + row * 350
-          }
+          position: calculatedPosition
         };
         updatedNodes.push(newNode);
         usedIds.add(newNode.id);

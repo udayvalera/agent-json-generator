@@ -2,15 +2,13 @@
 File Directory: src/App.tsx
 import React, { useRef, useState } from 'react';
 import { NodePalette } from './components/NodePalette';
-import { Canvas } from './components/Canvas';
+import { Canvas } from './components/Canvas'; 
 import { Toolbar } from './components/Toolbar';
 import { useWorkflow } from './hooks/useWorkflow';
-import { ConfigurationPanel } from './components/ConfigurationPanel';
 import { JsonViewPanel } from './components/JsonViewPanel';
 
 function App() {
   const fileInputRef = useRef<HTMLInputElement>(null);
-  
   const {
     nodes,
     selectedNodeId,
@@ -25,10 +23,8 @@ function App() {
     importWorkflow,
     validateWorkflow
   } = useWorkflow();
-
   const [isJsonPanelVisible, setIsJsonPanelVisible] = useState(false);
-  const selectedNode = nodes.find(n => n.id === selectedNodeId) ?? null;
-
+  
   const handleExport = () => {
     const workflow = exportWorkflow();
     const dataStr = JSON.stringify({ agent_graph: workflow }, null, 2);
@@ -43,7 +39,7 @@ function App() {
 
   const handleImport = () => {
     fileInputRef.current?.click();
-  };
+  }; 
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -68,7 +64,7 @@ function App() {
 
   const handleValidate = () => {
     const errors = validateWorkflow();
-    if (errors.length === 0) {
+    if (errors.length === 0) { 
       alert('Workflow validation passed! ✅');
     } else {
       alert('Validation errors:\n\n' + errors.join('\n'));
@@ -76,7 +72,7 @@ function App() {
   };
 
   const handleClear = () => {
-    if (confirm('Are you sure you want to clear all nodes? This cannot be undone.')) {
+    if (confirm('Are you sure you want to clear all nodes? This cannot be undone.')) { 
       clearAll();
     }
   };
@@ -94,7 +90,8 @@ function App() {
       />
       
       <div className="flex-1 flex overflow-hidden">
-        <NodePalette onDragStart={(e, nodeType) => e.dataTransfer.setData('application/json', JSON.stringify({ nodeType }))} />
+ 
+        <NodePalette onDragStart={(e, nodeType) => e.dataTransfer.setData('application/json', JSON.stringify({ nodeType }))} /> 
         
         <Canvas
           nodes={nodes}
@@ -103,19 +100,9 @@ function App() {
           onNodeClick={setSelectedNodeId}
           onNodeDelete={deleteNode}
           onNodeDrop={addNode}
-          onSetStartNode={(nodeName) => setStartNodeId(nodeName)}
+          onSetStartNode={(nodeName) => setStartNodeId(nodeName)} 
           onNodeUpdate={updateNode}
         />
-        
-        {selectedNode && (
-          <ConfigurationPanel
-            key={selectedNode.id}
-            node={selectedNode}
-            nodes={nodes}
-            onClose={() => setSelectedNodeId(null)}
-            onSave={updateNode}
-          />
-        )}
         
         <JsonViewPanel
           isVisible={isJsonPanelVisible}
@@ -123,7 +110,8 @@ function App() {
           workflowJson={exportWorkflow()}
           onJsonChange={importWorkflow}
         />
-      </div>
+     
+      </div> 
 
       <input
         ref={fileInputRef}
@@ -239,7 +227,7 @@ import Editor from 'react-simple-code-editor';
 import { highlight, languages } from 'prismjs/components/prism-core';
 import 'prismjs/components/prism-json';
 import 'prismjs/themes/prism.css'; // You can choose a different theme
-import { X, Save } from 'lucide-react';
+import { X } from 'lucide-react';
 import { ExportedWorkflow } from '../hooks/useWorkflow';
 
 interface JsonViewPanelProps {
@@ -473,270 +461,9 @@ export const Toolbar: React.FC<ToolbarProps> = ({
 };
 ---
 ---
-File Directory: src/components/ConfigurationPanel.tsx
-import React, { useState, useEffect } from 'react';
-import { X, Plus, Trash2, Save } from 'lucide-react';
-import { AgentNode, AVAILABLE_TOOLS } from '../types/workflow';
-
-interface ConfigurationPanelProps {
-  node: AgentNode | null;
-  nodes: AgentNode[];
-  onClose: () => void;
-  onSave: (updatedNode: AgentNode) => void;
-}
-
-export const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({
-  node,
-  nodes,
-  onClose,
-  onSave
-}) => {
-  const [formData, setFormData] = useState<AgentNode | null>(null);
-  const [errors, setErrors] = useState<Record<string, string>>({});
-
-  useEffect(() => {
-    if (node) {
-      setFormData({ ...node });
-      setErrors({});
-    }
-  }, [node]);
-
-  if (!node || !formData) return null;
-
-  const validateForm = (): boolean => {
-    const newErrors: Record<string, string> = {};
-
-    if (!formData.name.trim()) {
-      newErrors.name = 'Name is required';
-    } else if (formData.name !== node.name && nodes.some(n => n.name === formData.name)) {
-      newErrors.name = 'Name must be unique';
-    }
-
-    if (!formData.initial_prompt.trim()) {
-      newErrors.initial_prompt = 'Initial prompt is required';
-    }
-
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
-  };
-
-  const handleSave = () => {
-    if (validateForm()) {
-      onSave(formData);
-    }
-  };
-
-  const addTransition = () => {
-    setFormData({
-      ...formData,
-      transitions: {
-        ...formData.transitions,
-        '': ''
-      }
-    });
-  };
-
-  const updateTransition = (oldCondition: string, newCondition: string, targetName: string) => {
-    const newTransitions = { ...formData.transitions };
-    delete newTransitions[oldCondition];
-    if (newCondition && targetName) {
-      newTransitions[newCondition] = targetName;
-    }
-    setFormData({
-      ...formData,
-      transitions: newTransitions
-    });
-  };
-
-  const removeTransition = (condition: string) => {
-    const newTransitions = { ...formData.transitions };
-    delete newTransitions[condition];
-    setFormData({
-      ...formData,
-      transitions: newTransitions
-    });
-  };
-
-  const toggleTool = (tool: string) => {
-    const newTools = formData.tools.includes(tool)
-      ? formData.tools.filter(t => t !== tool)
-      : [...formData.tools, tool];
-    
-    setFormData({
-      ...formData,
-      tools: newTools
-    });
-  };
-
-  const otherNodes = nodes.filter(n => n.id !== node.id);
-
-  return (
-    <div className="w-96 bg-white border-l border-gray-200 flex-shrink-0 flex flex-col h-full">
-      <div className="p-4 border-b border-gray-200 flex items-center justify-between">
-        <h2 className="text-lg font-semibold text-gray-800">Configure Node</h2>
-        <button
-          onClick={onClose}
-          className="p-1 hover:bg-gray-100 rounded text-gray-500"
-        >
-          <X className="w-5 h-5" />
-        </button>
-      </div>
-
-      <div className="flex-1 overflow-y-auto p-4 space-y-6">
-        {/* Node Type Badge */}
-        <div className={`inline-flex px-3 py-1 rounded-full text-sm font-medium ${
-          formData.type === 'conversational' 
-            ? 'bg-blue-100 text-blue-800' 
-            : 'bg-teal-100 text-teal-800'
-        }`}>
-          {formData.type === 'conversational' ? 'Conversational Agent' : 'Tool Execution Agent'}
-        </div>
-
-        {/* Name */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            Node Name *
-          </label>
-          <input
-            type="text"
-            value={formData.name}
-            onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-            className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 ${
-              errors.name ? 'border-red-300' : 'border-gray-300'
-            }`}
-            placeholder="Enter unique node name"
-          />
-          {errors.name && <p className="mt-1 text-sm text-red-600">{errors.name}</p>}
-        </div>
-
-        {/* Initial Prompt */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            Initial Prompt *
-          </label>
-          <textarea
-            value={formData.initial_prompt}
-            onChange={(e) => setFormData({ ...formData, initial_prompt: e.target.value })}
-            rows={4}
-            className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 ${
-              errors.initial_prompt ? 'border-red-300' : 'border-gray-300'
-            }`}
-            placeholder="Enter the initial prompt for this agent"
-          />
-          {errors.initial_prompt && <p className="mt-1 text-sm text-red-600">{errors.initial_prompt}</p>}
-        </div>
-
-        {/* Tools (Tool Execution only) */}
-        {formData.type === 'tool_execution' && (
-          <>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Available Tools
-              </label>
-              <div className="grid grid-cols-1 gap-2">
-                {AVAILABLE_TOOLS.map(tool => (
-                  <label key={tool} className="flex items-center space-x-2">
-                    <input
-                      type="checkbox"
-                      checked={formData.tools.includes(tool)}
-                      onChange={() => toggleTool(tool)}
-                      className="rounded border-gray-300 text-purple-600 focus:ring-purple-500"
-                    />
-                    <span className="text-sm text-gray-700">{tool}</span>
-                  </label>
-                ))}
-              </div>
-            </div>
-
-            <div>
-              <label className="flex items-center space-x-2">
-                <input
-                  type="checkbox"
-                  checked={formData.force_tool_call}
-                  onChange={(e) => setFormData({ ...formData, force_tool_call: e.target.checked })}
-                  className="rounded border-gray-300 text-purple-600 focus:ring-purple-500"
-                />
-                <span className="text-sm font-medium text-gray-700">Force Tool Call</span>
-              </label>
-              <p className="text-xs text-gray-500 mt-1">
-                When enabled, the agent must use one of the selected tools
-              </p>
-            </div>
-          </>
-        )}
-
-        {/* Transitions */}
-        <div>
-          <div className="flex items-center justify-between mb-2">
-            <label className="block text-sm font-medium text-gray-700">
-              Transitions
-            </label>
-            <button
-              onClick={addTransition}
-              className="flex items-center space-x-1 px-2 py-1 text-xs bg-purple-100 text-purple-700 rounded hover:bg-purple-200"
-            >
-              <Plus className="w-3 h-3" />
-              <span>Add</span>
-            </button>
-          </div>
-
-          <div className="space-y-3">
-            {Object.entries(formData.transitions).map(([condition, targetName]) => (
-              <div key={condition} className="grid grid-cols-5 gap-2 items-start">
-                <div className="col-span-2">
-                  <input
-                    type="text"
-                    value={condition}
-                    onChange={(e) => updateTransition(condition, e.target.value, targetName)}
-                    placeholder="Condition"
-                    className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-purple-500"
-                  />
-                </div>
-                <div className="col-span-2">
-                  <select
-                    value={targetName}
-                    onChange={(e) => updateTransition(condition, condition, e.target.value)}
-                    className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-purple-500"
-                  >
-                    <option value="">Select target</option>
-                    {otherNodes.map(n => (
-                      <option key={n.id} value={n.name}>{n.name}</option>
-                    ))}
-                  </select>
-                </div>
-                <button
-                  onClick={() => removeTransition(condition)}
-                  className="p-1 text-gray-400 hover:text-red-600"
-                >
-                  <Trash2 className="w-3 h-3" />
-                </button>
-              </div>
-            ))}
-          </div>
-
-          {Object.keys(formData.transitions).length === 0 && (
-            <p className="text-sm text-gray-500 italic">No transitions defined</p>
-          )}
-        </div>
-      </div>
-
-      <div className="p-4 border-t border-gray-200">
-        <button
-          onClick={handleSave}
-          className="w-full flex items-center justify-center space-x-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 focus:ring-2 focus:ring-purple-500 focus:ring-offset-2"
-        >
-          <Save className="w-4 h-4" />
-          <span>Save Changes</span>
-        </button>
-      </div>
-    </div>
-  );
-};
----
----
 File Directory: src/components/WorkflowNode.tsx
 import React, { useState } from 'react';
-import { MessageCircle, Cog, Play, Trash2, Plus, ChevronsDown, ChevronsUp, Move, Check, X as IconX } from 'lucide-react';
+import { MessageCircle, Cog, Play, Trash2, Plus, ChevronsDown, ChevronsUp, Move} from 'lucide-react';
 import { AgentNode, AVAILABLE_TOOLS } from '../types/workflow';
 
 interface WorkflowNodeProps {
@@ -754,6 +481,7 @@ interface WorkflowNodeProps {
   dragOffset?: { x: number; y: number } | null;
   connectionInProgress: boolean;
   isDragging: boolean;
+  zoom: number;
   registerInputTerminal: (el: HTMLDivElement | null) => void;
   registerOutputTerminal: (condition: string, el: HTMLDivElement | null) => void;
 }
@@ -773,6 +501,7 @@ export const WorkflowNode: React.FC<WorkflowNodeProps> = ({
   onMouseDown,
   connectionInProgress,
   isDragging,
+  zoom,
   registerInputTerminal,
   registerOutputTerminal,
 }) => {
@@ -780,6 +509,7 @@ export const WorkflowNode: React.FC<WorkflowNodeProps> = ({
   const [editingName, setEditingName] = useState(false);
   const [tempName, setTempName] = useState(node.name);
   const [nameError, setNameError] = useState('');
+  const [editingTransition, setEditingTransition] = useState<{ oldCondition: string; newCondition: string } | null>(null);
   const isConversational = node.type === 'conversational';
   const transitionEntries = Object.entries(node.transitions);
   const nodeColors = {
@@ -813,6 +543,7 @@ export const WorkflowNode: React.FC<WorkflowNodeProps> = ({
     setNameError('');
     setEditingName(false);
   };
+
   const handleNameKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
       validateAndSaveName();
@@ -822,6 +553,7 @@ export const WorkflowNode: React.FC<WorkflowNodeProps> = ({
       setEditingName(false);
     }
   };
+
   const addTransition = () => {
     const newCondition = 'new_condition';
     let i = 1;
@@ -830,16 +562,16 @@ export const WorkflowNode: React.FC<WorkflowNodeProps> = ({
     }
     onUpdate({ ...node, transitions: { ...node.transitions, [`${newCondition}_${i}`]: '' } });
   };
+
   const updateTransitionCondition = (oldCondition: string, newCondition: string) => {
-    if (oldCondition === newCondition) return;
+    if (oldCondition === newCondition || !newCondition.trim()) return;
     const newTransitions = { ...node.transitions };
     const target = newTransitions[oldCondition];
     delete newTransitions[oldCondition];
-    if(newCondition) {
-      newTransitions[newCondition] = target;
-    }
+    newTransitions[newCondition.trim()] = target;
     onUpdate({ ...node, transitions: newTransitions });
   };
+
   const removeTransition = (condition: string) => {
     const { [condition]: _, ...rest } = node.transitions;
     onUpdate({ ...node, transitions: rest });
@@ -852,17 +584,13 @@ export const WorkflowNode: React.FC<WorkflowNodeProps> = ({
     onUpdate({ ...node, tools: newTools });
   };
 
-  // --- SMOOTH DRAGGING STYLE CALCULATION ---
   const style: React.CSSProperties = {
-    // Base position from the node's stored position
     top: `${node.position.y}px`,
     left: `${node.position.x}px`,
     pointerEvents: 'auto',
-    // Apply smooth CSS transform during drag for GPU acceleration
     transform: (isDragging && dragOffset)
-      ? `translate(${dragOffset.x}px, ${dragOffset.y}px)`
+      ? `translate(${dragOffset.x / zoom}px, ${dragOffset.y / zoom}px)`
       : 'none',
-    // Add smooth transition when not dragging for polished feel
     transition: isDragging ? 'none' : 'transform 0.1s ease-out',
   };
 
@@ -871,6 +599,7 @@ export const WorkflowNode: React.FC<WorkflowNodeProps> = ({
     e.preventDefault();
     onStartConnection(node.id, condition);
   };
+
   const handleNodeClick = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (connectionInProgress) {
@@ -879,6 +608,7 @@ export const WorkflowNode: React.FC<WorkflowNodeProps> = ({
       onClick();
     }
   };
+
   return (
     <div
       className={`absolute bg-white rounded-xl transition-all duration-150 flex flex-col ${isDragging ? `shadow-2xl scale-105 z-50 ${colors.shadow}` : `shadow-lg ${colors.shadow}`} ${isSelected ? `border-2 ${colors.border}` : 'border border-gray-200'} w-80`}
@@ -889,20 +619,20 @@ export const WorkflowNode: React.FC<WorkflowNodeProps> = ({
       <div ref={registerInputTerminal} className="absolute left-0 top-1/2 -translate-x-1/2 -translate-y-1/2 w-6 h-6 z-0">{connectionInProgress && <div className="w-full h-full bg-purple-200 rounded-full border-2 border-white shadow-lg animate-pulse ring-2 ring-purple-400"></div>}</div>
       
       <div 
-        className={`p-3 rounded-t-xl flex items-center justify-between ${colors.bg} cursor-grab active:cursor-grabbing`}
+        className={`p-3 rounded-t-xl flex items-center justify-between space-x-3 ${colors.bg} cursor-grab active:cursor-grabbing`}
         onMouseDown={onMouseDown}
       >
-        <div className="flex items-center space-x-3">
+        <div className="flex-1 flex items-center space-x-3 min-w-0">
             <Move className="w-4 h-4 text-gray-400 pointer-events-none" />
-            <div className="flex items-center space-x-2">
-                {isConversational ? <MessageCircle className={`w-5 h-5 ${colors.icon}`} /> : <Cog className={`w-5 h-5 ${colors.icon}`} />}
+            <div className="flex items-center space-x-2 min-w-0">
+               {isConversational ? <MessageCircle className={`w-5 h-5 ${colors.icon}`} /> : <Cog className={`w-5 h-5 ${colors.icon}`} />}
                 {editingName ? (
-                    <div className="flex flex-col" onMouseDown={e => e.stopPropagation()}>
-                        <input type="text" value={tempName} onChange={e => setTempName(e.target.value)} onKeyDown={handleNameKeyDown} onBlur={validateAndSaveName} autoFocus onClick={e => e.stopPropagation()} className={`px-2 py-1 text-md font-semibold rounded-md border ${nameError ? 'border-red-400' : 'border-blue-300'} focus:ring-2 focus:ring-blue-300 focus:outline-none`} />
+                    <div className="flex flex-col w-full" onMouseDown={e => e.stopPropagation()}>
+                        <input type="text" value={tempName} onChange={e => setTempName(e.target.value)} onKeyDown={handleNameKeyDown} onBlur={validateAndSaveName} autoFocus onClick={e => e.stopPropagation()} className={`w-full px-2 py-1 text-md font-semibold rounded-md border ${nameError ? 'border-red-400' : 'border-blue-300'} focus:ring-2 focus:ring-blue-300 focus:outline-none`} />
                         {nameError && <p className="text-xs text-red-600 mt-1">{nameError}</p>}
                     </div>
                 ) : (
-                    <h3 onClick={e => { e.stopPropagation(); setEditingName(true); }} onMouseDown={e => e.stopPropagation()} className={`font-semibold text-md ${colors.text} cursor-pointer hover:bg-white/60 px-2 py-1 rounded-md`}>{node.name}</h3>
+                    <h3 onClick={e => { e.stopPropagation(); setEditingName(true); }} onMouseDown={e => e.stopPropagation()} className={`font-semibold text-md ${colors.text} cursor-pointer hover:bg-white/60 px-2 py-1 rounded-md truncate`}>{node.name}</h3>
                 )}
             </div>
         </div>
@@ -919,14 +649,14 @@ export const WorkflowNode: React.FC<WorkflowNodeProps> = ({
         </div>
         {node.type === 'tool_execution' && (
              <div>
-                <label className="block text-xs font-medium text-gray-500 mb-2">Tools</label>
+                 <label className="block text-xs font-medium text-gray-500 mb-2">Tools</label>
                 <div className="grid grid-cols-2 gap-2">
                     {AVAILABLE_TOOLS.map(tool => (
                         <label key={tool} className="flex items-center space-x-2 p-1.5 hover:bg-gray-100 rounded-md cursor-pointer">
-                            <input type="checkbox" checked={node.tools.includes(tool)} onChange={() => toggleTool(tool)} onClick={e => e.stopPropagation()} className="w-4 h-4 rounded border-gray-300 text-purple-600 focus:ring-purple-500" />
+                           <input type="checkbox" checked={node.tools.includes(tool)} onChange={() => toggleTool(tool)} onClick={e => e.stopPropagation()} className="w-4 h-4 rounded border-gray-300 text-purple-600 focus:ring-purple-500" />
                             <span className="text-sm text-gray-700">{tool.replace('_tool', '')}</span>
                         </label>
-                    ))}
+                     ))}
                 </div>
                 <label className="flex items-center space-x-2 p-1.5 hover:bg-gray-100 rounded-md cursor-pointer mt-2">
                     <input type="checkbox" checked={node.force_tool_call} onChange={e => onUpdate({ ...node, force_tool_call: e.target.checked })} onClick={e => e.stopPropagation()} className="w-4 h-4 rounded border-gray-300 text-purple-600 focus:ring-purple-500" />
@@ -942,15 +672,38 @@ export const WorkflowNode: React.FC<WorkflowNodeProps> = ({
             <button onClick={e => { e.stopPropagation(); addTransition(); }} className="flex items-center space-x-1.5 px-2 py-1 text-xs bg-purple-100 text-purple-700 rounded-md hover:bg-purple-200 font-semibold"><Plus className="w-3 h-3" /><span>Add</span></button>
         </div>
         <div className="space-y-2">
-            {transitionEntries.length > 0 ? transitionEntries.map(([condition, targetName]) => (
-                <div key={condition} className="relative flex items-center justify-between bg-gray-100 p-2 rounded-lg group">
-                    <input type="text" value={condition} onBlur={e => updateTransitionCondition(condition, e.target.value)} onChange={e => e.stopPropagation()} onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur()}} onClick={e => e.stopPropagation()} className="flex-1 text-sm bg-transparent outline-none focus:bg-white px-1 py-0.5 rounded-md"/>
-                    <button onClick={() => removeTransition(condition)} className="p-1 text-gray-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 className="w-3.5 h-3.5" /></button>
-                    <div ref={el => registerOutputTerminal(condition, el)} className="absolute right-0 top-1/2 translate-x-1/2 -translate-y-1/2 w-6 h-6 z-10" onMouseDown={e => handleTerminalMouseDown(condition, e)}>
-                        <div className={`w-full h-full rounded-full border-2 border-white shadow-md flex items-center justify-center transition-all cursor-pointer group-hover:scale-125 ${targetName ? 'bg-green-500 group-hover:bg-green-600' : 'bg-purple-500 group-hover:bg-purple-600'}`} />
-                    </div>
-                </div>
-            )) : <div className="text-center py-2"><p className="text-sm text-gray-400 italic">No transitions.</p></div>}
+            {transitionEntries.length > 0 ? transitionEntries.map(([condition, targetName]) => {
+                const isEditing = editingTransition?.oldCondition === condition;
+                return (
+                  <div key={condition} className="relative flex items-center justify-between bg-gray-100 p-2 rounded-lg group">
+                      <input 
+                        type="text" 
+                        value={isEditing ? editingTransition.newCondition : condition} 
+                        onFocus={() => setEditingTransition({ oldCondition: condition, newCondition: condition })}
+                        onChange={e => {
+                          e.stopPropagation();
+                          setEditingTransition(prev => prev ? { ...prev, newCondition: e.target.value } : null);
+                        }}
+                        onBlur={() => {
+                          if (editingTransition) {
+                            updateTransitionCondition(editingTransition.oldCondition, editingTransition.newCondition);
+                            setEditingTransition(null);
+                          }
+                        }}
+                        onKeyDown={e => { 
+                          e.stopPropagation();
+                          if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+                          if (e.key === 'Escape') setEditingTransition(null);
+                        }} 
+                        onClick={e => e.stopPropagation()} 
+                        className="flex-1 text-sm bg-transparent outline-none focus:bg-white px-1 py-0.5 rounded-md"/>
+                      <button onClick={() => removeTransition(condition)} className="p-1 text-gray-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 className="w-3.5 h-3.5" /></button>
+                      <div ref={el => registerOutputTerminal(condition, el)} className="absolute right-0 top-1/2 translate-x-1/2 -translate-y-1/2 w-6 h-6 z-10" onMouseDown={e => handleTerminalMouseDown(condition, e)}>
+                          <div className={`w-full h-full rounded-full border-2 border-white shadow-md flex items-center justify-center transition-all cursor-pointer group-hover:scale-125 ${targetName ? 'bg-green-500 group-hover:bg-green-600' : 'bg-purple-500 group-hover:bg-purple-600'}`} />
+                      </div>
+                  </div>
+                )
+            }) : <div className="text-center py-2"><p className="text-sm text-gray-400 italic">No transitions.</p></div>}
         </div>
       </div>
       
@@ -969,10 +722,10 @@ import React, { useRef, useState, useCallback, useLayoutEffect } from 'react';
 import { WorkflowNode } from './WorkflowNode';
 import { ConnectionLine } from './ConnectionLine';
 import { AgentNode, ConnectionInProgress } from '../types/workflow';
+import { ZoomIn, ZoomOut } from 'lucide-react';
 
 // A type for our map of terminal positions
 type TerminalPositionMap = Map<string, { x: number; y: number }>;
-
 // New type for the state of a dragged node
 interface DraggedNodeState {
   nodeId: string;
@@ -1008,10 +761,8 @@ export const Canvas: React.FC<CanvasProps> = ({
   const [canvasOffset, setCanvasOffset] = useState({ x: 0, y: 0 });
   const [isDraggingCanvas, setIsDraggingCanvas] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
-  
-  // Updated dragged node state to include current offset for smooth transforms
   const [draggedNode, setDraggedNode] = useState<DraggedNodeState | null>(null);
-  
+  const [zoom, setZoom] = useState(1);
   const terminalPositions = useRef<Map<string, { x: number; y: number }>>(new Map());
   const terminalElements = useRef<Map<string, HTMLElement | null>>(new Map());
 
@@ -1031,14 +782,14 @@ export const Canvas: React.FC<CanvasProps> = ({
     terminalElements.current.forEach((el, key) => {
       if (el) {
         const rect = el.getBoundingClientRect();
-        const x = rect.left - canvasRect.left + rect.width / 2 - canvasOffset.x;
-        const y = rect.top - canvasRect.top + rect.height / 2 - canvasOffset.y;
-        newPositions.set(key, { x, y });
+        const worldX = (rect.left - canvasRect.left - canvasOffset.x) / zoom + (rect.width / zoom / 2);
+        const worldY = (rect.top - canvasRect.top - canvasOffset.y) / zoom + (rect.height / zoom / 2);
+        newPositions.set(key, { x: worldX, y: worldY });
       }
     });
     
     terminalPositions.current = newPositions;
-  }, [nodes, canvasOffset, selectedNodeId, draggedNode]); // Added draggedNode to deps
+  }, [nodes, canvasOffset, selectedNodeId, draggedNode, zoom]);
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
@@ -1059,9 +810,10 @@ export const Canvas: React.FC<CanvasProps> = ({
     if (!rect) return;
 
     const position = {
-      x: e.clientX - rect.left - canvasOffset.x - 128,
-      y: e.clientY - rect.top - canvasOffset.y - 80
+      x: (e.clientX - rect.left - canvasOffset.x) / zoom - 128,
+      y: (e.clientY - rect.top - canvasOffset.y) / zoom - 80
     };
+
     try {
       const data = JSON.parse(e.dataTransfer.getData('application/json'));
       onNodeDrop(position, data.nodeType);
@@ -1079,7 +831,6 @@ export const Canvas: React.FC<CanvasProps> = ({
   };
 
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
-    // Canvas Panning Logic
     if (isDraggingCanvas) {
       const newOffset = {
         x: e.clientX - dragStart.x,
@@ -1089,12 +840,10 @@ export const Canvas: React.FC<CanvasProps> = ({
       return;
     }
     
-    // Node Dragging Logic - now with smooth transforms
     if (draggedNode) {
       const deltaX = e.clientX - draggedNode.initialMousePosition.x;
       const deltaY = e.clientY - draggedNode.initialMousePosition.y;
       
-      // Update the current offset for smooth CSS transform
       setDraggedNode(prev => prev ? {
         ...prev,
         currentOffset: { x: deltaX, y: deltaY }
@@ -1102,29 +851,27 @@ export const Canvas: React.FC<CanvasProps> = ({
       return;
     }
 
-    // Connection Logic
     if (connectionInProgress) {
       const rect = canvasRef.current?.getBoundingClientRect();
       if (rect) {
         setConnectionInProgress(prev => prev ? {
           ...prev,
           currentPosition: {
-            x: e.clientX - rect.left - canvasOffset.x,
-            y: e.clientY - rect.top - canvasOffset.y
+            x: (e.clientX - rect.left - canvasOffset.x) / zoom,
+            y: (e.clientY - rect.top - canvasOffset.y) / zoom
           }
         } : null);
       }
     }
-  }, [isDraggingCanvas, dragStart, draggedNode, connectionInProgress]);
-  
+  }, [isDraggingCanvas, dragStart, draggedNode, connectionInProgress, zoom]);
+
   const handleMouseUp = () => {
-    // If we were dragging a node, commit its final position to the global state
     if (draggedNode) {
       const node = nodes.find(n => n.id === draggedNode.nodeId);
       if (node) {
         const finalPosition = {
-          x: draggedNode.initialNodePosition.x + draggedNode.currentOffset.x,
-          y: draggedNode.initialNodePosition.y + draggedNode.currentOffset.y
+          x: draggedNode.initialNodePosition.x + draggedNode.currentOffset.x / zoom,
+          y: draggedNode.initialNodePosition.y + draggedNode.currentOffset.y / zoom
         };
         onNodeUpdate({ ...node, position: finalPosition });
       }
@@ -1165,7 +912,7 @@ export const Canvas: React.FC<CanvasProps> = ({
     }
     setConnectionInProgress(null);
   };
-  
+
   const handleCanvasClick = (e: React.MouseEvent) => {
     if (e.target === canvasRef.current) {
       setConnectionInProgress(null);
@@ -1180,12 +927,15 @@ export const Canvas: React.FC<CanvasProps> = ({
         nodeId,
         initialNodePosition: node.position,
         initialMousePosition: { x: e.clientX, y: e.clientY },
-        currentOffset: { x: 0, y: 0 } // Start with no offset
+        currentOffset: { x: 0, y: 0 }
       });
       e.preventDefault();
       e.stopPropagation();
     }
   };
+
+  const handleZoomIn = () => setZoom(z => Math.min(z + 0.1, 2));
+  const handleZoomOut = () => setZoom(z => Math.max(z - 0.1, 0.3));
 
   const connections = nodes.flatMap(sourceNode =>
     Object.entries(sourceNode.transitions).map(([condition, targetName]) => {
@@ -1207,7 +957,7 @@ export const Canvas: React.FC<CanvasProps> = ({
         condition: condition
       };
     }).filter((c): c is NonNullable<typeof c> => c !== null));
-
+    
   return (
     <div
       ref={canvasRef}
@@ -1230,14 +980,17 @@ export const Canvas: React.FC<CanvasProps> = ({
             linear-gradient(90deg, rgba(0,0,0,0.1) 1px, transparent 1px)
           `,
           backgroundSize: '20px 20px',
-          backgroundPosition: `${canvasOffset.x}px ${canvasOffset.y}px`
+          backgroundPosition: `${canvasOffset.x}px ${canvasOffset.y}px`,
+          transform: `scale(${zoom})`,
+          transformOrigin: 'top left',
         }}
       />
 
       <div 
         className="absolute inset-0 pointer-events-none"
         style={{
-          transform: `translate(${canvasOffset.x}px, ${canvasOffset.y}px)`
+          transform: `translate(${canvasOffset.x}px, ${canvasOffset.y}px) scale(${zoom})`,
+          transformOrigin: 'top left'
         }}
       >
         <svg className="absolute inset-0 w-full h-full pointer-events-none overflow-visible">
@@ -1283,6 +1036,7 @@ export const Canvas: React.FC<CanvasProps> = ({
             dragOffset={draggedNode?.nodeId === node.id ? draggedNode.currentOffset : null}
             connectionInProgress={!!connectionInProgress}
             isDragging={!!draggedNode && draggedNode.nodeId === node.id}
+            zoom={zoom}
             registerInputTerminal={(el) => registerTerminal(`input-${node.id}`, el as HTMLDivElement)}
             registerOutputTerminal={(condition, el) => registerTerminal(`output-${node.id}-${condition}`, el as HTMLDivElement)}
           />
@@ -1314,23 +1068,33 @@ export const Canvas: React.FC<CanvasProps> = ({
         </div>
       )}
 
-      <div className="absolute bottom-4 right-4 bg-white/90 backdrop-blur-sm px-3 py-2 rounded-lg shadow-md border border-gray-200 text-xs text-gray-600">
-        <p>Click & drag canvas to pan • Click & drag nodes to move</p>
+      <div className="absolute bottom-4 right-4 bg-white/90 backdrop-blur-sm p-2 rounded-lg shadow-md border border-gray-200 flex items-center divide-x divide-gray-200">
+          <div className="pr-3 text-xs text-gray-600">
+              <p>Click & drag canvas to pan • Click & drag nodes to move</p>
+          </div>
+          <div className="pl-3 flex items-center space-x-2 text-sm text-gray-700">
+              <button onClick={handleZoomOut} className="p-1 hover:bg-gray-100 rounded-md disabled:text-gray-300" disabled={zoom <= 0.3} title="Zoom Out">
+                  <ZoomOut className="w-5 h-5" />
+              </button>
+              <span className="font-semibold tabular-nums min-w-[40px] text-center" title="Zoom Level">{Math.round(zoom * 100)}%</span>
+              <button onClick={handleZoomIn} className="p-1 hover:bg-gray-100 rounded-md disabled:text-gray-300" disabled={zoom >= 2} title="Zoom In">
+                  <ZoomIn className="w-5 h-5" />
+              </button>
+          </div>
       </div>
     </div>
   );
 };
-
 ---
 ---
 File Directory: src/hooks/useWorkflow.ts
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback } from 'react';
 import { AgentNode } from '../types/workflow';
 
 // Define the shape of the data in the exported/imported JSON file.
 // Notice that the agent data itself does not contain the name.
 type ExportedAgentData = Omit<AgentNode, 'id' | 'position' | 'name'>;
-interface ExportedWorkflow {
+export interface ExportedWorkflow {
   start_node: string;
   agents: Record<string, ExportedAgentData>;
 }
@@ -1466,26 +1230,118 @@ export const useWorkflow = () => {
     const updatedNodes: AgentNode[] = [];
     const usedIds = new Set<string>();
 
-    // Process nodes from the imported graph
-    nodeNames.forEach((name, index) => {
+    // Build adjacency list for the graph
+    const adjacencyList = new Map<string, string[]>();
+    nodeNames.forEach(name => {
+      adjacencyList.set(name, []);
+    });
+    
+    // Populate adjacency list based on transitions
+    nodeNames.forEach(name => {
+      const agentData = agent_graph.agents[name];
+      const transitions = Object.values(agentData.transitions || {});
+      transitions.forEach(targetName => {
+        if (typeof targetName === 'string' && adjacencyList.has(targetName)) {
+          const neighbors = adjacencyList.get(name) || [];
+          if (!neighbors.includes(targetName)) {
+            neighbors.push(targetName);
+          }
+        }
+      });
+    });
+
+    // Calculate hierarchical levels using BFS from start node
+    const levels = new Map<string, number>();
+    const orphanedNodes = new Set<string>(nodeNames);
+    
+    if (agent_graph.start_node && adjacencyList.has(agent_graph.start_node)) {
+      const queue: Array<{ node: string; level: number }> = [{ node: agent_graph.start_node, level: 0 }];
+      const visited = new Set<string>();
+      
+      while (queue.length > 0) {
+        const { node, level } = queue.shift()!;
+        
+        if (visited.has(node)) continue;
+        visited.add(node);
+        orphanedNodes.delete(node);
+        
+        levels.set(node, level);
+        
+        const neighbors = adjacencyList.get(node) || [];
+        neighbors.forEach(neighbor => {
+          if (!visited.has(neighbor)) {
+            queue.push({ node: neighbor, level: level + 1 });
+          }
+        });
+      }
+    }
+
+    // Group nodes by level
+    const nodesByLevel = new Map<number, string[]>();
+    levels.forEach((level, nodeName) => {
+      if (!nodesByLevel.has(level)) {
+        nodesByLevel.set(level, []);
+      }
+      nodesByLevel.get(level)!.push(nodeName);
+    });
+
+    // Calculate positions for connected nodes
+    const nodePositions = new Map<string, { x: number; y: number }>();
+    const levelSpacing = 400; // Horizontal spacing between levels
+    const nodeSpacing = 350;  // Vertical spacing between nodes in same level
+    const startX = 100;
+    const startY = 100;
+
+    // Position connected nodes level by level (horizontal flow)
+    const sortedLevels = Array.from(nodesByLevel.keys()).sort((a, b) => a - b);
+    sortedLevels.forEach(level => {
+      const nodesInLevel = nodesByLevel.get(level)!;
+      const levelHeight = (nodesInLevel.length - 1) * nodeSpacing;
+      const levelStartY = startY - levelHeight / 2;
+      
+      nodesInLevel.forEach((nodeName, index) => {
+        nodePositions.set(nodeName, {
+          x: startX + level * levelSpacing,
+          y: levelStartY + index * nodeSpacing
+        });
+      });
+    });
+
+    // Position orphaned nodes to the right of the main graph
+    const orphanedArray = Array.from(orphanedNodes);
+    if (orphanedArray.length > 0) {
+      const maxLevel = Math.max(...Array.from(levels.values()), -1);
+      const orphanStartX = startX + (maxLevel + 2) * levelSpacing;
+      const orphanRows = Math.ceil(Math.sqrt(orphanedArray.length));
+      
+      orphanedArray.forEach((nodeName, index) => {
+        const row = index % orphanRows;
+        const col = Math.floor(index / orphanRows);
+        nodePositions.set(nodeName, {
+          x: orphanStartX + col * levelSpacing,
+          y: startY + row * nodeSpacing
+        });
+      });
+    }
+
+    // Process nodes from the imported graph with calculated positions
+    nodeNames.forEach((name) => {
       const agentData = agent_graph.agents[name];
       const existingNode = existingNodesMap.get(name);
+      const calculatedPosition = nodePositions.get(name) || { x: startX, y: startY };
 
       if (existingNode) {
-        // Update existing node, preserving its ID and position
+        // Update existing node, preserving its ID but using calculated position
         const updatedNode: AgentNode = {
           ...existingNode,
           ...agentData,
           name: name, // Ensure name is correct
+          position: calculatedPosition
         };
         updatedNodes.push(updatedNode);
         usedIds.add(existingNode.id);
       } else {
-        // It's a new node, create it with a new ID and calculated position
-        const cols = Math.ceil(Math.sqrt(nodes.length || 1));
-        const row = Math.floor(index / cols);
-        const col = index % cols;
-
+        // It's a new node, create it with calculated position
         const newNode: AgentNode = {
           id: crypto.randomUUID(),
           name: name,
@@ -1494,10 +1350,7 @@ export const useWorkflow = () => {
           tools: agentData.tools,
           force_tool_call: agentData.force_tool_call,
           transitions: agentData.transitions,
-          position: {
-            x: 100 + col * 400,
-            y: 100 + row * 350
-          }
+          position: calculatedPosition
         };
         updatedNodes.push(newNode);
         usedIds.add(newNode.id);
