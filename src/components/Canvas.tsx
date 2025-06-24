@@ -2,10 +2,10 @@ import React, { useRef, useState, useCallback, useLayoutEffect } from 'react';
 import { WorkflowNode } from './WorkflowNode';
 import { ConnectionLine } from './ConnectionLine';
 import { AgentNode, ConnectionInProgress } from '../types/workflow';
+import { ZoomIn, ZoomOut } from 'lucide-react';
 
 // A type for our map of terminal positions
 type TerminalPositionMap = Map<string, { x: number; y: number }>;
-
 // New type for the state of a dragged node
 interface DraggedNodeState {
   nodeId: string;
@@ -41,10 +41,8 @@ export const Canvas: React.FC<CanvasProps> = ({
   const [canvasOffset, setCanvasOffset] = useState({ x: 0, y: 0 });
   const [isDraggingCanvas, setIsDraggingCanvas] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
-  
-  // Updated dragged node state to include current offset for smooth transforms
   const [draggedNode, setDraggedNode] = useState<DraggedNodeState | null>(null);
-  
+  const [zoom, setZoom] = useState(1);
   const terminalPositions = useRef<Map<string, { x: number; y: number }>>(new Map());
   const terminalElements = useRef<Map<string, HTMLElement | null>>(new Map());
 
@@ -64,14 +62,14 @@ export const Canvas: React.FC<CanvasProps> = ({
     terminalElements.current.forEach((el, key) => {
       if (el) {
         const rect = el.getBoundingClientRect();
-        const x = rect.left - canvasRect.left + rect.width / 2 - canvasOffset.x;
-        const y = rect.top - canvasRect.top + rect.height / 2 - canvasOffset.y;
-        newPositions.set(key, { x, y });
+        const worldX = (rect.left - canvasRect.left - canvasOffset.x) / zoom + (rect.width / zoom / 2);
+        const worldY = (rect.top - canvasRect.top - canvasOffset.y) / zoom + (rect.height / zoom / 2);
+        newPositions.set(key, { x: worldX, y: worldY });
       }
     });
     
     terminalPositions.current = newPositions;
-  }, [nodes, canvasOffset, selectedNodeId, draggedNode]); // Added draggedNode to deps
+  }, [nodes, canvasOffset, selectedNodeId, draggedNode, zoom]);
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
@@ -92,9 +90,10 @@ export const Canvas: React.FC<CanvasProps> = ({
     if (!rect) return;
 
     const position = {
-      x: e.clientX - rect.left - canvasOffset.x - 128,
-      y: e.clientY - rect.top - canvasOffset.y - 80
+      x: (e.clientX - rect.left - canvasOffset.x) / zoom - 128,
+      y: (e.clientY - rect.top - canvasOffset.y) / zoom - 80
     };
+
     try {
       const data = JSON.parse(e.dataTransfer.getData('application/json'));
       onNodeDrop(position, data.nodeType);
@@ -112,7 +111,6 @@ export const Canvas: React.FC<CanvasProps> = ({
   };
 
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
-    // Canvas Panning Logic
     if (isDraggingCanvas) {
       const newOffset = {
         x: e.clientX - dragStart.x,
@@ -122,12 +120,10 @@ export const Canvas: React.FC<CanvasProps> = ({
       return;
     }
     
-    // Node Dragging Logic - now with smooth transforms
     if (draggedNode) {
       const deltaX = e.clientX - draggedNode.initialMousePosition.x;
       const deltaY = e.clientY - draggedNode.initialMousePosition.y;
       
-      // Update the current offset for smooth CSS transform
       setDraggedNode(prev => prev ? {
         ...prev,
         currentOffset: { x: deltaX, y: deltaY }
@@ -135,29 +131,27 @@ export const Canvas: React.FC<CanvasProps> = ({
       return;
     }
 
-    // Connection Logic
     if (connectionInProgress) {
       const rect = canvasRef.current?.getBoundingClientRect();
       if (rect) {
         setConnectionInProgress(prev => prev ? {
           ...prev,
           currentPosition: {
-            x: e.clientX - rect.left - canvasOffset.x,
-            y: e.clientY - rect.top - canvasOffset.y
+            x: (e.clientX - rect.left - canvasOffset.x) / zoom,
+            y: (e.clientY - rect.top - canvasOffset.y) / zoom
           }
         } : null);
       }
     }
-  }, [isDraggingCanvas, dragStart, draggedNode, connectionInProgress]);
-  
+  }, [isDraggingCanvas, dragStart, draggedNode, connectionInProgress, zoom]);
+
   const handleMouseUp = () => {
-    // If we were dragging a node, commit its final position to the global state
     if (draggedNode) {
       const node = nodes.find(n => n.id === draggedNode.nodeId);
       if (node) {
         const finalPosition = {
-          x: draggedNode.initialNodePosition.x + draggedNode.currentOffset.x,
-          y: draggedNode.initialNodePosition.y + draggedNode.currentOffset.y
+          x: draggedNode.initialNodePosition.x + draggedNode.currentOffset.x / zoom,
+          y: draggedNode.initialNodePosition.y + draggedNode.currentOffset.y / zoom
         };
         onNodeUpdate({ ...node, position: finalPosition });
       }
@@ -198,7 +192,7 @@ export const Canvas: React.FC<CanvasProps> = ({
     }
     setConnectionInProgress(null);
   };
-  
+
   const handleCanvasClick = (e: React.MouseEvent) => {
     if (e.target === canvasRef.current) {
       setConnectionInProgress(null);
@@ -213,12 +207,15 @@ export const Canvas: React.FC<CanvasProps> = ({
         nodeId,
         initialNodePosition: node.position,
         initialMousePosition: { x: e.clientX, y: e.clientY },
-        currentOffset: { x: 0, y: 0 } // Start with no offset
+        currentOffset: { x: 0, y: 0 }
       });
       e.preventDefault();
       e.stopPropagation();
     }
   };
+
+  const handleZoomIn = () => setZoom(z => Math.min(z + 0.1, 2));
+  const handleZoomOut = () => setZoom(z => Math.max(z - 0.1, 0.3));
 
   const connections = nodes.flatMap(sourceNode =>
     Object.entries(sourceNode.transitions).map(([condition, targetName]) => {
@@ -240,7 +237,7 @@ export const Canvas: React.FC<CanvasProps> = ({
         condition: condition
       };
     }).filter((c): c is NonNullable<typeof c> => c !== null));
-
+    
   return (
     <div
       ref={canvasRef}
@@ -263,14 +260,17 @@ export const Canvas: React.FC<CanvasProps> = ({
             linear-gradient(90deg, rgba(0,0,0,0.1) 1px, transparent 1px)
           `,
           backgroundSize: '20px 20px',
-          backgroundPosition: `${canvasOffset.x}px ${canvasOffset.y}px`
+          backgroundPosition: `${canvasOffset.x}px ${canvasOffset.y}px`,
+          transform: `scale(${zoom})`,
+          transformOrigin: 'top left',
         }}
       />
 
       <div 
         className="absolute inset-0 pointer-events-none"
         style={{
-          transform: `translate(${canvasOffset.x}px, ${canvasOffset.y}px)`
+          transform: `translate(${canvasOffset.x}px, ${canvasOffset.y}px) scale(${zoom})`,
+          transformOrigin: 'top left'
         }}
       >
         <svg className="absolute inset-0 w-full h-full pointer-events-none overflow-visible">
@@ -316,6 +316,7 @@ export const Canvas: React.FC<CanvasProps> = ({
             dragOffset={draggedNode?.nodeId === node.id ? draggedNode.currentOffset : null}
             connectionInProgress={!!connectionInProgress}
             isDragging={!!draggedNode && draggedNode.nodeId === node.id}
+            zoom={zoom}
             registerInputTerminal={(el) => registerTerminal(`input-${node.id}`, el as HTMLDivElement)}
             registerOutputTerminal={(condition, el) => registerTerminal(`output-${node.id}-${condition}`, el as HTMLDivElement)}
           />
@@ -347,8 +348,19 @@ export const Canvas: React.FC<CanvasProps> = ({
         </div>
       )}
 
-      <div className="absolute bottom-4 right-4 bg-white/90 backdrop-blur-sm px-3 py-2 rounded-lg shadow-md border border-gray-200 text-xs text-gray-600">
-        <p>Click & drag canvas to pan • Click & drag nodes to move</p>
+      <div className="absolute bottom-4 right-4 bg-white/90 backdrop-blur-sm p-2 rounded-lg shadow-md border border-gray-200 flex items-center divide-x divide-gray-200">
+          <div className="pr-3 text-xs text-gray-600">
+              <p>Click & drag canvas to pan • Click & drag nodes to move</p>
+          </div>
+          <div className="pl-3 flex items-center space-x-2 text-sm text-gray-700">
+              <button onClick={handleZoomOut} className="p-1 hover:bg-gray-100 rounded-md disabled:text-gray-300" disabled={zoom <= 0.3} title="Zoom Out">
+                  <ZoomOut className="w-5 h-5" />
+              </button>
+              <span className="font-semibold tabular-nums min-w-[40px] text-center" title="Zoom Level">{Math.round(zoom * 100)}%</span>
+              <button onClick={handleZoomIn} className="p-1 hover:bg-gray-100 rounded-md disabled:text-gray-300" disabled={zoom >= 2} title="Zoom In">
+                  <ZoomIn className="w-5 h-5" />
+              </button>
+          </div>
       </div>
     </div>
   );

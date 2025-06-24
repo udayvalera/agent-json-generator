@@ -1,0 +1,1549 @@
+---
+File Directory: src/App.tsx
+import React, { useRef, useState } from 'react';
+import { NodePalette } from './components/NodePalette';
+import { Canvas } from './components/Canvas';
+import { Toolbar } from './components/Toolbar';
+import { useWorkflow } from './hooks/useWorkflow';
+import { ConfigurationPanel } from './components/ConfigurationPanel';
+import { JsonViewPanel } from './components/JsonViewPanel';
+
+function App() {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  
+  const {
+    nodes,
+    selectedNodeId,
+    startNodeId,
+    setSelectedNodeId,
+    setStartNodeId,
+    addNode,
+    updateNode,
+    deleteNode,
+    clearAll,
+    exportWorkflow,
+    importWorkflow,
+    validateWorkflow
+  } = useWorkflow();
+
+  const [isJsonPanelVisible, setIsJsonPanelVisible] = useState(false);
+  const selectedNode = nodes.find(n => n.id === selectedNodeId) ?? null;
+
+  const handleExport = () => {
+    const workflow = exportWorkflow();
+    const dataStr = JSON.stringify({ agent_graph: workflow }, null, 2);
+    const dataUri = 'data:application/json;charset=utf-8,'+ encodeURIComponent(dataStr);
+    
+    const exportFileDefaultName = 'agent_workflow.json';
+    const linkElement = document.createElement('a');
+    linkElement.setAttribute('href', dataUri);
+    linkElement.setAttribute('download', exportFileDefaultName);
+    linkElement.click();
+  };
+
+  const handleImport = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const json = JSON.parse(e.target?.result as string);
+        importWorkflow(json);
+      } catch (error) {
+        alert('Failed to parse JSON file. Please check the file format.');
+      }
+    };
+    reader.readAsText(file);
+    
+    // Reset the input
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  const handleValidate = () => {
+    const errors = validateWorkflow();
+    if (errors.length === 0) {
+      alert('Workflow validation passed! ✅');
+    } else {
+      alert('Validation errors:\n\n' + errors.join('\n'));
+    }
+  };
+
+  const handleClear = () => {
+    if (confirm('Are you sure you want to clear all nodes? This cannot be undone.')) {
+      clearAll();
+    }
+  };
+
+  return (
+    <div className="h-screen flex flex-col bg-gray-50">
+      <Toolbar
+        onImport={handleImport}
+        onExport={handleExport}
+        onClear={handleClear}
+        onValidate={handleValidate}
+        hasNodes={nodes.length > 0}
+        isJsonPanelVisible={isJsonPanelVisible}
+        onToggleJsonPanel={() => setIsJsonPanelVisible(!isJsonPanelVisible)}
+      />
+      
+      <div className="flex-1 flex overflow-hidden">
+        <NodePalette onDragStart={(e, nodeType) => e.dataTransfer.setData('application/json', JSON.stringify({ nodeType }))} />
+        
+        <Canvas
+          nodes={nodes}
+          selectedNodeId={selectedNodeId}
+          startNodeId={startNodeId}
+          onNodeClick={setSelectedNodeId}
+          onNodeDelete={deleteNode}
+          onNodeDrop={addNode}
+          onSetStartNode={(nodeName) => setStartNodeId(nodeName)}
+          onNodeUpdate={updateNode}
+        />
+        
+        {selectedNode && (
+          <ConfigurationPanel
+            key={selectedNode.id}
+            node={selectedNode}
+            nodes={nodes}
+            onClose={() => setSelectedNodeId(null)}
+            onSave={updateNode}
+          />
+        )}
+        
+        <JsonViewPanel
+          isVisible={isJsonPanelVisible}
+          onClose={() => setIsJsonPanelVisible(false)}
+          workflowJson={exportWorkflow()}
+          onJsonChange={importWorkflow}
+        />
+      </div>
+
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".json"
+        onChange={handleFileChange}
+        className="hidden"
+      />
+    </div>
+  );
+}
+
+export default App;
+---
+---
+File Directory: src/main.tsx
+import { StrictMode } from 'react';
+import { createRoot } from 'react-dom/client';
+import App from './App.tsx';
+import './index.css';
+
+createRoot(document.getElementById('root')!).render(
+  <StrictMode>
+    <App />
+  </StrictMode>
+);
+
+---
+---
+File Directory: src/index.css
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+---
+---
+File Directory: src/vite-env.d.ts
+/// <reference types="vite/client" />
+
+---
+---
+File Directory: src/types/workflow.ts
+export interface AgentNode {
+  id: string;
+  name: string;
+  type: 'conversational' | 'tool_execution';
+  initial_prompt: string;
+  tools: string[];
+  force_tool_call: boolean;
+  transitions: Record<string, string>;
+  position: { x: number; y: number };
+}
+
+export interface WorkflowState {
+  start_node: string;
+  agents: Record<string, Omit<AgentNode, 'id' | 'position'>>;
+}
+
+export interface Connection {
+  from: string;
+  to: string;
+  condition: string;
+  fromTerminal: { x: number; y: number };
+  toTerminal: { x: number; y: number };
+}
+
+export interface ConnectionInProgress {
+  fromNodeId: string;
+  condition: string;
+  startPosition: { x: number; y: number };
+  currentPosition: { x: number; y: number };
+}
+
+export const AVAILABLE_TOOLS = [
+  'git_tool',
+  'file_system_tool',
+  'web_scraper_tool',
+  'email_tool',
+  'database_tool',
+  'api_tool',
+  'image_processor_tool',
+  'text_analyzer_tool'
+];
+---
+---
+File Directory: src/components/NodePalette.tsx
+
+// components/NodePalette.tsx
+import { MessageCircle, Cog } from 'lucide-react';
+interface NodePaletteProps {
+  onDragStart: (e: React.DragEvent, nodeType: 'conversational' | 'tool_execution') => void;
+}
+export const NodePalette: React.FC<NodePaletteProps> = ({ onDragStart }) => (
+    <div className="w-64 bg-white border-r border-gray-200 p-4 flex-shrink-0">
+      <h2 className="text-lg font-semibold text-gray-800 mb-4">Node Palette</h2>
+      <div className="space-y-3">
+        <div draggable onDragStart={(e) => e.dataTransfer.setData('application/json', JSON.stringify({ nodeType: 'conversational' }))} className="p-4 bg-blue-50 border-2 border-blue-200 rounded-lg cursor-move hover:bg-blue-100 hover:border-blue-300 transition-colors group">
+          <div className="flex items-center space-x-3"><MessageCircle className="w-6 h-6 text-blue-600" /><div><h3 className="font-medium text-blue-800">Conversational Agent</h3><p className="text-sm text-blue-600">Handles dialogue</p></div></div>
+        </div>
+        <div draggable onDragStart={(e) => e.dataTransfer.setData('application/json', JSON.stringify({ nodeType: 'tool_execution' }))} className="p-4 bg-purple-50 border-2 border-purple-200 rounded-lg cursor-move hover:bg-purple-100 hover:border-purple-300 transition-colors group">
+          <div className="flex items-center space-x-3"><Cog className="w-6 h-6 text-purple-600" /><div><h3 className="font-medium text-purple-800">Tool Agent</h3><p className="text-sm text-purple-600">Executes functions</p></div></div>
+        </div>
+      </div>
+    </div>
+);
+
+---
+---
+File Directory: src/components/JsonViewPanel.tsx
+// src/components/JsonViewPanel.tsx
+import React, { useState, useEffect } from 'react';
+import Editor from 'react-simple-code-editor';
+import { highlight, languages } from 'prismjs/components/prism-core';
+import 'prismjs/components/prism-json';
+import 'prismjs/themes/prism.css'; // You can choose a different theme
+import { X, Save } from 'lucide-react';
+import { ExportedWorkflow } from '../hooks/useWorkflow';
+
+interface JsonViewPanelProps {
+  workflowJson: ExportedWorkflow;
+  onJsonChange: (workflow: { agent_graph: ExportedWorkflow }) => void;
+  onClose: () => void;
+  isVisible: boolean;
+}
+
+// A simple debounce function
+function debounce<F extends (...args: any[]) => any>(func: F, waitFor: number) {
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  return (...args: Parameters<F>): void => {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+    timeout = setTimeout(() => func(...args), waitFor);
+  };
+}
+
+export const JsonViewPanel: React.FC<JsonViewPanelProps> = ({ workflowJson, onJsonChange, onClose, isVisible }) => {
+  const [jsonString, setJsonString] = useState('');
+  const [error, setError] = useState<string | null>(null);
+
+  // Effect to update the editor when the workflow changes from the canvas
+  useEffect(() => {
+    // Only update if the panel is visible to avoid overwriting user edits
+    if (isVisible) {
+      setJsonString(JSON.stringify(workflowJson, null, 2));
+    }
+  }, [workflowJson, isVisible]);
+
+  const handleJsonChange = (newJson: string) => {
+    setJsonString(newJson);
+    validateAndSync(newJson);
+  };
+  
+  const validateAndSync = debounce((newJson: string) => {
+    try {
+      const parsedJson = JSON.parse(newJson);
+      onJsonChange({ agent_graph: parsedJson });
+      setError(null);
+    } catch (e) {
+      setError('Invalid JSON format.');
+    }
+  }, 500); // 500ms debounce
+
+  if (!isVisible) return null;
+
+  return (
+    <div className="w-1/3 max-w-2xl bg-white border-l border-gray-200 flex-shrink-0 flex flex-col h-full">
+      <div className="p-4 border-b border-gray-200 flex items-center justify-between">
+        <h2 className="text-lg font-semibold text-gray-800">Live JSON View</h2>
+        <button onClick={onClose} className="p-1 hover:bg-gray-100 rounded text-gray-500">
+          <X className="w-5 h-5" />
+        </button>
+      </div>
+
+      <div className="flex-1 overflow-y-auto font-mono text-sm relative">
+        <Editor
+          value={jsonString}
+          onValueChange={handleJsonChange}
+          highlight={code => highlight(code, languages.json, 'json')}
+          padding={16}
+          className="bg-gray-50 h-full"
+          style={{
+            fontFamily: '"Fira Code", "Fira Mono", monospace',
+            fontSize: 14,
+          }}
+        />
+      </div>
+
+      <div className="p-2 border-t border-gray-200 bg-white">
+        {error ? (
+          <p className="text-sm text-red-600 px-2">{error}</p>
+        ) : (
+          <p className="text-sm text-green-600 px-2">JSON is valid.</p>
+        )}
+      </div>
+    </div>
+  );
+};
+---
+---
+File Directory: src/components/ConnectionLine.tsx
+import React from 'react';
+
+interface ConnectionLineProps {
+  from: { x: number; y: number };
+  to: { x: number; y: number };
+  condition: string;
+  isTemporary?: boolean;
+}
+
+export const ConnectionLine: React.FC<ConnectionLineProps> = ({ from, to, condition, isTemporary }) => {
+  // Path for the curved line
+  const path = `M ${from.x} ${from.y} C ${from.x + 60} ${from.y} ${to.x - 60} ${to.y} ${to.x} ${to.y}`;
+
+  // Calculate the position for the label (midpoint of the curve)
+  const labelX = (from.x + to.x) / 2;
+  const labelY = (from.y + to.y) / 2;
+
+  // Unique ID for the path to be referenced by the textPath
+  const pathId = `path_${from.x}_${from.y}_${to.x}_${to.y}`;
+
+  return (
+    <g>
+      {/* Invisible path for the text to follow */}
+      <path id={pathId} d={path} fill="none" />
+
+      {/* Visible styled path */}
+      <path
+        d={path}
+        stroke={isTemporary ? "#A78BFA" : "#8B5CF6"}
+        strokeWidth="2.5"
+        fill="none"
+        markerEnd="url(#arrowhead)"
+        strokeDasharray={isTemporary ? "8 4" : "none"}
+        className={isTemporary ? "animate-pulse" : ""}
+        style={{ filter: 'drop-shadow(0 1px 1px rgb(0 0 0 / 0.1))' }}
+      />
+
+      {/* Text label that follows the curve */}
+      {!isTemporary && condition && (
+        <text dy="-6" textAnchor="middle" className="text-xs font-medium" fill="#6D28D9">
+          <textPath href={`#${pathId}`} startOffset="50%">
+            {condition}
+          </textPath>
+        </text>
+      )}
+    </g>
+  );
+};
+
+---
+---
+File Directory: src/components/Toolbar.tsx
+import React from 'react';
+import { Download, Upload, Trash2, FileText, Code2 } from 'lucide-react';
+
+interface ToolbarProps {
+  onImport: () => void;
+  onExport: () => void;
+  onClear: () => void;
+  onValidate: () => void;
+  onToggleJsonPanel: () => void; // New prop
+  isJsonPanelVisible: boolean; // New prop
+  hasNodes: boolean;
+}
+
+export const Toolbar: React.FC<ToolbarProps> = ({
+  onImport,
+  onExport,
+  onClear,
+  onValidate,
+  onToggleJsonPanel,
+  isJsonPanelVisible,
+  hasNodes
+}) => {
+  return (
+    <div className="bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between">
+      <div>
+        <h1 className="text-xl font-bold text-gray-800">Visual Agent Workflow Builder</h1>
+        <p className="text-sm text-gray-600">Design and configure agent workflows with drag-and-drop</p>
+      </div>
+
+      <div className="flex items-center space-x-2">
+        <button
+          onClick={onToggleJsonPanel}
+          disabled={!hasNodes}
+          className={`flex items-center space-x-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+            isJsonPanelVisible
+              ? 'bg-indigo-200 text-indigo-800'
+              : hasNodes
+              ? 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+              : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+          }`}
+        >
+          <Code2 className="w-4 h-4" />
+          <span>JSON</span>
+        </button>
+        <button
+          onClick={onValidate}
+          disabled={!hasNodes}
+          className={`flex items-center space-x-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+            hasNodes
+              ? 'bg-blue-100 text-blue-700 hover:bg-blue-200'
+              : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+          }`}
+        >
+          <FileText className="w-4 h-4" />
+          <span>Validate</span>
+        </button>
+
+        <button
+          onClick={onImport}
+          className="flex items-center space-x-2 px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 text-sm font-medium"
+        >
+          <Upload className="w-4 h-4" />
+          <span>Import JSON</span>
+        </button>
+
+        <button
+          onClick={onExport}
+          disabled={!hasNodes}
+          className={`flex items-center space-x-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+            hasNodes
+              ? 'bg-green-100 text-green-700 hover:bg-green-200'
+              : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+          }`}
+        >
+          <Download className="w-4 h-4" />
+          <span>Export JSON</span>
+        </button>
+
+        <button
+          onClick={onClear}
+          disabled={!hasNodes}
+          className={`flex items-center space-x-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+            hasNodes
+              ? 'bg-red-100 text-red-700 hover:bg-red-200'
+              : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+          }`}
+        >
+          <Trash2 className="w-4 h-4" />
+          <span>Clear All</span>
+        </button>
+      </div>
+    </div>
+  );
+};
+---
+---
+File Directory: src/components/ConfigurationPanel.tsx
+import React, { useState, useEffect } from 'react';
+import { X, Plus, Trash2, Save } from 'lucide-react';
+import { AgentNode, AVAILABLE_TOOLS } from '../types/workflow';
+
+interface ConfigurationPanelProps {
+  node: AgentNode | null;
+  nodes: AgentNode[];
+  onClose: () => void;
+  onSave: (updatedNode: AgentNode) => void;
+}
+
+export const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({
+  node,
+  nodes,
+  onClose,
+  onSave
+}) => {
+  const [formData, setFormData] = useState<AgentNode | null>(null);
+  const [errors, setErrors] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    if (node) {
+      setFormData({ ...node });
+      setErrors({});
+    }
+  }, [node]);
+
+  if (!node || !formData) return null;
+
+  const validateForm = (): boolean => {
+    const newErrors: Record<string, string> = {};
+
+    if (!formData.name.trim()) {
+      newErrors.name = 'Name is required';
+    } else if (formData.name !== node.name && nodes.some(n => n.name === formData.name)) {
+      newErrors.name = 'Name must be unique';
+    }
+
+    if (!formData.initial_prompt.trim()) {
+      newErrors.initial_prompt = 'Initial prompt is required';
+    }
+
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
+  };
+
+  const handleSave = () => {
+    if (validateForm()) {
+      onSave(formData);
+    }
+  };
+
+  const addTransition = () => {
+    setFormData({
+      ...formData,
+      transitions: {
+        ...formData.transitions,
+        '': ''
+      }
+    });
+  };
+
+  const updateTransition = (oldCondition: string, newCondition: string, targetName: string) => {
+    const newTransitions = { ...formData.transitions };
+    delete newTransitions[oldCondition];
+    if (newCondition && targetName) {
+      newTransitions[newCondition] = targetName;
+    }
+    setFormData({
+      ...formData,
+      transitions: newTransitions
+    });
+  };
+
+  const removeTransition = (condition: string) => {
+    const newTransitions = { ...formData.transitions };
+    delete newTransitions[condition];
+    setFormData({
+      ...formData,
+      transitions: newTransitions
+    });
+  };
+
+  const toggleTool = (tool: string) => {
+    const newTools = formData.tools.includes(tool)
+      ? formData.tools.filter(t => t !== tool)
+      : [...formData.tools, tool];
+    
+    setFormData({
+      ...formData,
+      tools: newTools
+    });
+  };
+
+  const otherNodes = nodes.filter(n => n.id !== node.id);
+
+  return (
+    <div className="w-96 bg-white border-l border-gray-200 flex-shrink-0 flex flex-col h-full">
+      <div className="p-4 border-b border-gray-200 flex items-center justify-between">
+        <h2 className="text-lg font-semibold text-gray-800">Configure Node</h2>
+        <button
+          onClick={onClose}
+          className="p-1 hover:bg-gray-100 rounded text-gray-500"
+        >
+          <X className="w-5 h-5" />
+        </button>
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-4 space-y-6">
+        {/* Node Type Badge */}
+        <div className={`inline-flex px-3 py-1 rounded-full text-sm font-medium ${
+          formData.type === 'conversational' 
+            ? 'bg-blue-100 text-blue-800' 
+            : 'bg-teal-100 text-teal-800'
+        }`}>
+          {formData.type === 'conversational' ? 'Conversational Agent' : 'Tool Execution Agent'}
+        </div>
+
+        {/* Name */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            Node Name *
+          </label>
+          <input
+            type="text"
+            value={formData.name}
+            onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+            className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 ${
+              errors.name ? 'border-red-300' : 'border-gray-300'
+            }`}
+            placeholder="Enter unique node name"
+          />
+          {errors.name && <p className="mt-1 text-sm text-red-600">{errors.name}</p>}
+        </div>
+
+        {/* Initial Prompt */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            Initial Prompt *
+          </label>
+          <textarea
+            value={formData.initial_prompt}
+            onChange={(e) => setFormData({ ...formData, initial_prompt: e.target.value })}
+            rows={4}
+            className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 ${
+              errors.initial_prompt ? 'border-red-300' : 'border-gray-300'
+            }`}
+            placeholder="Enter the initial prompt for this agent"
+          />
+          {errors.initial_prompt && <p className="mt-1 text-sm text-red-600">{errors.initial_prompt}</p>}
+        </div>
+
+        {/* Tools (Tool Execution only) */}
+        {formData.type === 'tool_execution' && (
+          <>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Available Tools
+              </label>
+              <div className="grid grid-cols-1 gap-2">
+                {AVAILABLE_TOOLS.map(tool => (
+                  <label key={tool} className="flex items-center space-x-2">
+                    <input
+                      type="checkbox"
+                      checked={formData.tools.includes(tool)}
+                      onChange={() => toggleTool(tool)}
+                      className="rounded border-gray-300 text-purple-600 focus:ring-purple-500"
+                    />
+                    <span className="text-sm text-gray-700">{tool}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <label className="flex items-center space-x-2">
+                <input
+                  type="checkbox"
+                  checked={formData.force_tool_call}
+                  onChange={(e) => setFormData({ ...formData, force_tool_call: e.target.checked })}
+                  className="rounded border-gray-300 text-purple-600 focus:ring-purple-500"
+                />
+                <span className="text-sm font-medium text-gray-700">Force Tool Call</span>
+              </label>
+              <p className="text-xs text-gray-500 mt-1">
+                When enabled, the agent must use one of the selected tools
+              </p>
+            </div>
+          </>
+        )}
+
+        {/* Transitions */}
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <label className="block text-sm font-medium text-gray-700">
+              Transitions
+            </label>
+            <button
+              onClick={addTransition}
+              className="flex items-center space-x-1 px-2 py-1 text-xs bg-purple-100 text-purple-700 rounded hover:bg-purple-200"
+            >
+              <Plus className="w-3 h-3" />
+              <span>Add</span>
+            </button>
+          </div>
+
+          <div className="space-y-3">
+            {Object.entries(formData.transitions).map(([condition, targetName]) => (
+              <div key={condition} className="grid grid-cols-5 gap-2 items-start">
+                <div className="col-span-2">
+                  <input
+                    type="text"
+                    value={condition}
+                    onChange={(e) => updateTransition(condition, e.target.value, targetName)}
+                    placeholder="Condition"
+                    className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-purple-500"
+                  />
+                </div>
+                <div className="col-span-2">
+                  <select
+                    value={targetName}
+                    onChange={(e) => updateTransition(condition, condition, e.target.value)}
+                    className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-purple-500"
+                  >
+                    <option value="">Select target</option>
+                    {otherNodes.map(n => (
+                      <option key={n.id} value={n.name}>{n.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <button
+                  onClick={() => removeTransition(condition)}
+                  className="p-1 text-gray-400 hover:text-red-600"
+                >
+                  <Trash2 className="w-3 h-3" />
+                </button>
+              </div>
+            ))}
+          </div>
+
+          {Object.keys(formData.transitions).length === 0 && (
+            <p className="text-sm text-gray-500 italic">No transitions defined</p>
+          )}
+        </div>
+      </div>
+
+      <div className="p-4 border-t border-gray-200">
+        <button
+          onClick={handleSave}
+          className="w-full flex items-center justify-center space-x-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 focus:ring-2 focus:ring-purple-500 focus:ring-offset-2"
+        >
+          <Save className="w-4 h-4" />
+          <span>Save Changes</span>
+        </button>
+      </div>
+    </div>
+  );
+};
+---
+---
+File Directory: src/components/WorkflowNode.tsx
+import React, { useState } from 'react';
+import { MessageCircle, Cog, Play, Trash2, Plus, ChevronsDown, ChevronsUp, Move, Check, X as IconX } from 'lucide-react';
+import { AgentNode, AVAILABLE_TOOLS } from '../types/workflow';
+
+interface WorkflowNodeProps {
+  node: AgentNode;
+  nodes: AgentNode[];
+  isSelected: boolean;
+  isStartNode: boolean;
+  onClick: () => void;
+  onDelete: () => void;
+  onSetAsStart: () => void;
+  onUpdate: (updatedNode: AgentNode) => void;
+  onStartConnection: (nodeId: string, condition: string) => void;
+  onEndConnection: (nodeId: string) => void;
+  onMouseDown: (e: React.MouseEvent) => void;
+  dragOffset?: { x: number; y: number } | null;
+  connectionInProgress: boolean;
+  isDragging: boolean;
+  registerInputTerminal: (el: HTMLDivElement | null) => void;
+  registerOutputTerminal: (condition: string, el: HTMLDivElement | null) => void;
+}
+
+export const WorkflowNode: React.FC<WorkflowNodeProps> = ({
+  node,
+  nodes,
+  isSelected,
+  isStartNode,
+  onClick,
+  onDelete,
+  onSetAsStart,
+  onUpdate,
+  onStartConnection,
+  onEndConnection,
+  dragOffset,
+  onMouseDown,
+  connectionInProgress,
+  isDragging,
+  registerInputTerminal,
+  registerOutputTerminal,
+}) => {
+  const [isExpanded, setIsExpanded] = useState(false);
+  const [editingName, setEditingName] = useState(false);
+  const [tempName, setTempName] = useState(node.name);
+  const [nameError, setNameError] = useState('');
+  const isConversational = node.type === 'conversational';
+  const transitionEntries = Object.entries(node.transitions);
+  const nodeColors = {
+    conversational: {
+      bg: 'bg-blue-50',
+      border: 'border-blue-400',
+      shadow: 'shadow-blue-500/20',
+      text: 'text-blue-800',
+      icon: 'text-blue-600',
+    },
+    tool_execution: {
+      bg: 'bg-purple-50',
+      border: 'border-purple-400',
+      shadow: 'shadow-purple-500/20',
+      text: 'text-purple-800',
+      icon: 'text-purple-600',
+    }
+  };
+  const colors = isConversational ? nodeColors.conversational : nodeColors.tool_execution;
+
+  const validateAndSaveName = () => {
+    if (!tempName.trim()) {
+      setNameError('Name cannot be empty.');
+      return;
+    }
+    if (nodes.some(n => n.id !== node.id && n.name === tempName)) {
+      setNameError('Name must be unique.');
+      return;
+    }
+    onUpdate({ ...node, name: tempName });
+    setNameError('');
+    setEditingName(false);
+  };
+  const handleNameKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      validateAndSaveName();
+    } else if (e.key === 'Escape') {
+      setTempName(node.name);
+      setNameError('');
+      setEditingName(false);
+    }
+  };
+  const addTransition = () => {
+    const newCondition = 'new_condition';
+    let i = 1;
+    while (`${newCondition}_${i}` in node.transitions) {
+      i++;
+    }
+    onUpdate({ ...node, transitions: { ...node.transitions, [`${newCondition}_${i}`]: '' } });
+  };
+  const updateTransitionCondition = (oldCondition: string, newCondition: string) => {
+    if (oldCondition === newCondition) return;
+    const newTransitions = { ...node.transitions };
+    const target = newTransitions[oldCondition];
+    delete newTransitions[oldCondition];
+    if(newCondition) {
+      newTransitions[newCondition] = target;
+    }
+    onUpdate({ ...node, transitions: newTransitions });
+  };
+  const removeTransition = (condition: string) => {
+    const { [condition]: _, ...rest } = node.transitions;
+    onUpdate({ ...node, transitions: rest });
+  };
+  
+  const toggleTool = (tool: string) => {
+    const newTools = node.tools.includes(tool)
+      ? node.tools.filter(t => t !== tool)
+      : [...node.tools, tool];
+    onUpdate({ ...node, tools: newTools });
+  };
+
+  // --- SMOOTH DRAGGING STYLE CALCULATION ---
+  const style: React.CSSProperties = {
+    // Base position from the node's stored position
+    top: `${node.position.y}px`,
+    left: `${node.position.x}px`,
+    pointerEvents: 'auto',
+    // Apply smooth CSS transform during drag for GPU acceleration
+    transform: (isDragging && dragOffset)
+      ? `translate(${dragOffset.x}px, ${dragOffset.y}px)`
+      : 'none',
+    // Add smooth transition when not dragging for polished feel
+    transition: isDragging ? 'none' : 'transform 0.1s ease-out',
+  };
+
+  const handleTerminalMouseDown = (condition: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    onStartConnection(node.id, condition);
+  };
+  const handleNodeClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (connectionInProgress) {
+      onEndConnection(node.id);
+    } else {
+      onClick();
+    }
+  };
+  return (
+    <div
+      className={`absolute bg-white rounded-xl transition-all duration-150 flex flex-col ${isDragging ? `shadow-2xl scale-105 z-50 ${colors.shadow}` : `shadow-lg ${colors.shadow}`} ${isSelected ? `border-2 ${colors.border}` : 'border border-gray-200'} w-80`}
+      style={style}
+      onClick={handleNodeClick}
+    >
+      {isStartNode && <div className="absolute -top-3 -left-3 bg-green-500 text-white rounded-full p-1.5 z-20 shadow-md border-2 border-white"><Play className="w-4 h-4" /></div>}
+      <div ref={registerInputTerminal} className="absolute left-0 top-1/2 -translate-x-1/2 -translate-y-1/2 w-6 h-6 z-0">{connectionInProgress && <div className="w-full h-full bg-purple-200 rounded-full border-2 border-white shadow-lg animate-pulse ring-2 ring-purple-400"></div>}</div>
+      
+      <div 
+        className={`p-3 rounded-t-xl flex items-center justify-between ${colors.bg} cursor-grab active:cursor-grabbing`}
+        onMouseDown={onMouseDown}
+      >
+        <div className="flex items-center space-x-3">
+            <Move className="w-4 h-4 text-gray-400 pointer-events-none" />
+            <div className="flex items-center space-x-2">
+                {isConversational ? <MessageCircle className={`w-5 h-5 ${colors.icon}`} /> : <Cog className={`w-5 h-5 ${colors.icon}`} />}
+                {editingName ? (
+                    <div className="flex flex-col" onMouseDown={e => e.stopPropagation()}>
+                        <input type="text" value={tempName} onChange={e => setTempName(e.target.value)} onKeyDown={handleNameKeyDown} onBlur={validateAndSaveName} autoFocus onClick={e => e.stopPropagation()} className={`px-2 py-1 text-md font-semibold rounded-md border ${nameError ? 'border-red-400' : 'border-blue-300'} focus:ring-2 focus:ring-blue-300 focus:outline-none`} />
+                        {nameError && <p className="text-xs text-red-600 mt-1">{nameError}</p>}
+                    </div>
+                ) : (
+                    <h3 onClick={e => { e.stopPropagation(); setEditingName(true); }} onMouseDown={e => e.stopPropagation()} className={`font-semibold text-md ${colors.text} cursor-pointer hover:bg-white/60 px-2 py-1 rounded-md`}>{node.name}</h3>
+                )}
+            </div>
+        </div>
+        <div className="flex items-center space-x-1">
+          <button onClick={e => { e.stopPropagation(); onDelete(); }} onMouseDown={e => e.stopPropagation()} className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-100 rounded-md" title="Delete node"><Trash2 className="w-4 h-4" /></button>
+          {!isStartNode && <button onClick={e => { e.stopPropagation(); onSetAsStart(); }} onMouseDown={e => e.stopPropagation()} className="p-1.5 text-gray-400 hover:text-green-600 hover:bg-green-100 rounded-md" title="Set as start node"><Play className="w-4 h-4" /></button>}
+        </div>
+      </div>
+      
+      <div className={`p-4 space-y-4 transition-all duration-300 ${isExpanded ? 'max-h-none' : 'max-h-0 overflow-hidden'}`}>
+        <div>
+          <label className="block text-xs font-medium text-gray-500 mb-1">Initial Prompt</label>
+          <textarea value={node.initial_prompt} onChange={e => onUpdate({ ...node, initial_prompt: e.target.value })} onClick={e => e.stopPropagation()} rows={3} className="w-full text-sm p-2 bg-gray-50 border border-gray-200 rounded-md focus:ring-2 focus:ring-purple-300 focus:outline-none" placeholder="Enter agent's starting instructions..." />
+        </div>
+        {node.type === 'tool_execution' && (
+             <div>
+                <label className="block text-xs font-medium text-gray-500 mb-2">Tools</label>
+                <div className="grid grid-cols-2 gap-2">
+                    {AVAILABLE_TOOLS.map(tool => (
+                        <label key={tool} className="flex items-center space-x-2 p-1.5 hover:bg-gray-100 rounded-md cursor-pointer">
+                            <input type="checkbox" checked={node.tools.includes(tool)} onChange={() => toggleTool(tool)} onClick={e => e.stopPropagation()} className="w-4 h-4 rounded border-gray-300 text-purple-600 focus:ring-purple-500" />
+                            <span className="text-sm text-gray-700">{tool.replace('_tool', '')}</span>
+                        </label>
+                    ))}
+                </div>
+                <label className="flex items-center space-x-2 p-1.5 hover:bg-gray-100 rounded-md cursor-pointer mt-2">
+                    <input type="checkbox" checked={node.force_tool_call} onChange={e => onUpdate({ ...node, force_tool_call: e.target.checked })} onClick={e => e.stopPropagation()} className="w-4 h-4 rounded border-gray-300 text-purple-600 focus:ring-purple-500" />
+                    <span className="text-sm font-medium text-gray-700">Force Tool Call</span>
+                </label>
+             </div>
+        )}
+      </div>
+
+      <div className="px-4 pb-4">
+        <div className="flex items-center justify-between mb-2">
+            <label className="block text-xs font-medium text-gray-500">Transitions</label>
+            <button onClick={e => { e.stopPropagation(); addTransition(); }} className="flex items-center space-x-1.5 px-2 py-1 text-xs bg-purple-100 text-purple-700 rounded-md hover:bg-purple-200 font-semibold"><Plus className="w-3 h-3" /><span>Add</span></button>
+        </div>
+        <div className="space-y-2">
+            {transitionEntries.length > 0 ? transitionEntries.map(([condition, targetName]) => (
+                <div key={condition} className="relative flex items-center justify-between bg-gray-100 p-2 rounded-lg group">
+                    <input type="text" value={condition} onBlur={e => updateTransitionCondition(condition, e.target.value)} onChange={e => e.stopPropagation()} onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur()}} onClick={e => e.stopPropagation()} className="flex-1 text-sm bg-transparent outline-none focus:bg-white px-1 py-0.5 rounded-md"/>
+                    <button onClick={() => removeTransition(condition)} className="p-1 text-gray-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 className="w-3.5 h-3.5" /></button>
+                    <div ref={el => registerOutputTerminal(condition, el)} className="absolute right-0 top-1/2 translate-x-1/2 -translate-y-1/2 w-6 h-6 z-10" onMouseDown={e => handleTerminalMouseDown(condition, e)}>
+                        <div className={`w-full h-full rounded-full border-2 border-white shadow-md flex items-center justify-center transition-all cursor-pointer group-hover:scale-125 ${targetName ? 'bg-green-500 group-hover:bg-green-600' : 'bg-purple-500 group-hover:bg-purple-600'}`} />
+                    </div>
+                </div>
+            )) : <div className="text-center py-2"><p className="text-sm text-gray-400 italic">No transitions.</p></div>}
+        </div>
+      </div>
+      
+      <div className="border-t border-gray-200 flex justify-center mt-auto">
+        <button onClick={e => { e.stopPropagation(); setIsExpanded(!isExpanded); }} className="py-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 w-full" title={isExpanded ? 'Collapse' : 'Expand'}>
+            {isExpanded ? <ChevronsUp className="w-5 h-5 mx-auto" /> : <ChevronsDown className="w-5 h-5 mx-auto" />}
+        </button>
+      </div>
+    </div>
+  );
+};
+---
+---
+File Directory: src/components/Canvas.tsx
+import React, { useRef, useState, useCallback, useLayoutEffect } from 'react';
+import { WorkflowNode } from './WorkflowNode';
+import { ConnectionLine } from './ConnectionLine';
+import { AgentNode, ConnectionInProgress } from '../types/workflow';
+
+// A type for our map of terminal positions
+type TerminalPositionMap = Map<string, { x: number; y: number }>;
+
+// New type for the state of a dragged node
+interface DraggedNodeState {
+  nodeId: string;
+  initialNodePosition: { x: number; y: number };
+  initialMousePosition: { x: number; y: number };
+  currentOffset: { x: number; y: number };
+}
+
+interface CanvasProps {
+  nodes: AgentNode[];
+  selectedNodeId: string | null;
+  startNodeId: string;
+  onNodeClick: (nodeId: string) => void;
+  onNodeDelete: (nodeId: string) => void;
+  onNodeDrop: (position: { x: number; y: number }, nodeType: 'conversational' | 'tool_execution') => void;
+  onNodeUpdate: (updatedNode: AgentNode) => void;
+  onSetStartNode: (nodeName: string) => void;
+}
+
+export const Canvas: React.FC<CanvasProps> = ({
+  nodes,
+  selectedNodeId,
+  startNodeId,
+  onNodeClick,
+  onNodeDelete,
+  onNodeDrop,
+  onSetStartNode,
+  onNodeUpdate
+}) => {
+  const canvasRef = useRef<HTMLDivElement>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
+  const [connectionInProgress, setConnectionInProgress] = useState<ConnectionInProgress | null>(null);
+  const [canvasOffset, setCanvasOffset] = useState({ x: 0, y: 0 });
+  const [isDraggingCanvas, setIsDraggingCanvas] = useState(false);
+  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+  
+  // Updated dragged node state to include current offset for smooth transforms
+  const [draggedNode, setDraggedNode] = useState<DraggedNodeState | null>(null);
+  
+  const terminalPositions = useRef<Map<string, { x: number; y: number }>>(new Map());
+  const terminalElements = useRef<Map<string, HTMLElement | null>>(new Map());
+
+  const registerTerminal = (key: string, el: HTMLElement | null) => {
+    if (el) {
+        terminalElements.current.set(key, el);
+    } else {
+        terminalElements.current.delete(key);
+    }
+  };
+
+  useLayoutEffect(() => {
+    const newPositions: Map<string, { x: number; y: number }> = new Map();
+    const canvasRect = canvasRef.current?.getBoundingClientRect();
+    if (!canvasRect) return;
+
+    terminalElements.current.forEach((el, key) => {
+      if (el) {
+        const rect = el.getBoundingClientRect();
+        const x = rect.left - canvasRect.left + rect.width / 2 - canvasOffset.x;
+        const y = rect.top - canvasRect.top + rect.height / 2 - canvasOffset.y;
+        newPositions.set(key, { x, y });
+      }
+    });
+    
+    terminalPositions.current = newPositions;
+  }, [nodes, canvasOffset, selectedNodeId, draggedNode]); // Added draggedNode to deps
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragOver(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    if (!canvasRef.current?.contains(e.relatedTarget as Node)) {
+      setIsDragOver(false);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragOver(false);
+    
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (!rect) return;
+
+    const position = {
+      x: e.clientX - rect.left - canvasOffset.x - 128,
+      y: e.clientY - rect.top - canvasOffset.y - 80
+    };
+    try {
+      const data = JSON.parse(e.dataTransfer.getData('application/json'));
+      onNodeDrop(position, data.nodeType);
+    } catch (error) {
+      console.error('Failed to parse drop data:', error);
+    }
+  };
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (e.target === canvasRef.current) {
+      setIsDraggingCanvas(true);
+      setDragStart({ x: e.clientX - canvasOffset.x, y: e.clientY - canvasOffset.y });
+      e.preventDefault();
+    }
+  };
+
+  const handleMouseMove = useCallback((e: React.MouseEvent) => {
+    // Canvas Panning Logic
+    if (isDraggingCanvas) {
+      const newOffset = {
+        x: e.clientX - dragStart.x,
+        y: e.clientY - dragStart.y
+      };
+      setCanvasOffset(newOffset);
+      return;
+    }
+    
+    // Node Dragging Logic - now with smooth transforms
+    if (draggedNode) {
+      const deltaX = e.clientX - draggedNode.initialMousePosition.x;
+      const deltaY = e.clientY - draggedNode.initialMousePosition.y;
+      
+      // Update the current offset for smooth CSS transform
+      setDraggedNode(prev => prev ? {
+        ...prev,
+        currentOffset: { x: deltaX, y: deltaY }
+      } : null);
+      return;
+    }
+
+    // Connection Logic
+    if (connectionInProgress) {
+      const rect = canvasRef.current?.getBoundingClientRect();
+      if (rect) {
+        setConnectionInProgress(prev => prev ? {
+          ...prev,
+          currentPosition: {
+            x: e.clientX - rect.left - canvasOffset.x,
+            y: e.clientY - rect.top - canvasOffset.y
+          }
+        } : null);
+      }
+    }
+  }, [isDraggingCanvas, dragStart, draggedNode, connectionInProgress]);
+  
+  const handleMouseUp = () => {
+    // If we were dragging a node, commit its final position to the global state
+    if (draggedNode) {
+      const node = nodes.find(n => n.id === draggedNode.nodeId);
+      if (node) {
+        const finalPosition = {
+          x: draggedNode.initialNodePosition.x + draggedNode.currentOffset.x,
+          y: draggedNode.initialNodePosition.y + draggedNode.currentOffset.y
+        };
+        onNodeUpdate({ ...node, position: finalPosition });
+      }
+    }
+
+    setIsDraggingCanvas(false);
+    setDraggedNode(null);
+  };
+
+  const handleStartConnection = (nodeId: string, condition: string) => {
+    const startKey = `output-${nodeId}-${condition}`;
+    const startPosition = terminalPositions.current.get(startKey);
+    if (startPosition) {
+      setConnectionInProgress({
+        fromNodeId: nodeId,
+        condition,
+        startPosition: startPosition,
+        currentPosition: startPosition
+      });
+    }
+  };
+
+  const handleEndConnection = (targetNodeId: string) => {
+    if (connectionInProgress && connectionInProgress.fromNodeId !== targetNodeId) {
+      const sourceNode = nodes.find(n => n.id === connectionInProgress.fromNodeId);
+      const targetNode = nodes.find(n => n.id === targetNodeId);
+      
+      if (sourceNode && targetNode) {
+        const updatedTransitions = {
+          ...sourceNode.transitions,
+          [connectionInProgress.condition]: targetNode.name
+        };
+        onNodeUpdate({
+          ...sourceNode,
+          transitions: updatedTransitions
+        });
+      }
+    }
+    setConnectionInProgress(null);
+  };
+  
+  const handleCanvasClick = (e: React.MouseEvent) => {
+    if (e.target === canvasRef.current) {
+      setConnectionInProgress(null);
+      onNodeClick('');
+    }
+  };
+
+  const handleNodeMouseDown = (nodeId: string, e: React.MouseEvent) => {
+    const node = nodes.find(n => n.id === nodeId);
+    if (node && !connectionInProgress) {
+      setDraggedNode({
+        nodeId,
+        initialNodePosition: node.position,
+        initialMousePosition: { x: e.clientX, y: e.clientY },
+        currentOffset: { x: 0, y: 0 } // Start with no offset
+      });
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  };
+
+  const connections = nodes.flatMap(sourceNode =>
+    Object.entries(sourceNode.transitions).map(([condition, targetName]) => {
+      const targetNode = nodes.find(n => n.name === targetName);
+      if (!targetNode) return null;
+
+      const fromKey = `output-${sourceNode.id}-${condition}`;
+      const toKey = `input-${targetNode.id}`;
+      
+      const fromPos = terminalPositions.current.get(fromKey);
+      const toPos = terminalPositions.current.get(toKey);
+
+      if (!fromPos || !toPos) return null;
+
+      return {
+        key: `${fromKey}-${toKey}`,
+        from: fromPos,
+        to: toPos,
+        condition: condition
+      };
+    }).filter((c): c is NonNullable<typeof c> => c !== null));
+
+  return (
+    <div
+      ref={canvasRef}
+      className={`flex-1 relative bg-gray-50 overflow-hidden transition-colors select-none ${
+        isDragOver ? 'bg-blue-50 border-2 border-dashed border-blue-300' : ''
+      } ${isDraggingCanvas ? 'cursor-grabbing' : 'cursor-grab'}`}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+      onMouseDown={handleMouseDown}
+      onMouseMove={handleMouseMove}
+      onMouseUp={handleMouseUp}
+      onClick={handleCanvasClick}
+    >
+      <div 
+        className="absolute inset-0 opacity-30 pointer-events-none"
+        style={{
+          backgroundImage: `
+            linear-gradient(rgba(0,0,0,0.1) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(0,0,0,0.1) 1px, transparent 1px)
+          `,
+          backgroundSize: '20px 20px',
+          backgroundPosition: `${canvasOffset.x}px ${canvasOffset.y}px`
+        }}
+      />
+
+      <div 
+        className="absolute inset-0 pointer-events-none"
+        style={{
+          transform: `translate(${canvasOffset.x}px, ${canvasOffset.y}px)`
+        }}
+      >
+        <svg className="absolute inset-0 w-full h-full pointer-events-none overflow-visible">
+          <defs>
+            <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+              <polygon points="0 0, 10 3.5, 0 7" fill="#8B5CF6"/>
+            </marker>
+          </defs>
+          
+          {connections.map((connection) => (
+            <ConnectionLine
+              key={connection.key}
+              from={connection.from}
+              to={connection.to}
+              condition={connection.condition}
+            />
+          ))}
+          
+          {connectionInProgress && (
+            <ConnectionLine
+              from={connectionInProgress.startPosition}
+              to={connectionInProgress.currentPosition}
+              condition={connectionInProgress.condition}
+              isTemporary
+            />
+          )}
+        </svg>
+
+        {nodes.map(node => (
+          <WorkflowNode
+            key={node.id}
+            node={node}
+            nodes={nodes}
+            isSelected={selectedNodeId === node.id}
+            isStartNode={startNodeId === node.name}
+            onClick={() => onNodeClick(node.id)}
+            onDelete={() => onNodeDelete(node.id)}
+            onSetAsStart={() => onSetStartNode(node.name)}
+            onUpdate={onNodeUpdate}
+            onStartConnection={handleStartConnection}
+            onEndConnection={handleEndConnection}
+            onMouseDown={(e: React.MouseEvent) => handleNodeMouseDown(node.id, e)}
+            dragOffset={draggedNode?.nodeId === node.id ? draggedNode.currentOffset : null}
+            connectionInProgress={!!connectionInProgress}
+            isDragging={!!draggedNode && draggedNode.nodeId === node.id}
+            registerInputTerminal={(el) => registerTerminal(`input-${node.id}`, el as HTMLDivElement)}
+            registerOutputTerminal={(condition, el) => registerTerminal(`output-${node.id}-${condition}`, el as HTMLDivElement)}
+          />
+        ))}
+      </div>
+
+      {isDragOver && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-50">
+          <div className="bg-white/90 backdrop-blur-sm p-6 rounded-lg border-2 border-dashed border-blue-400">
+            <p className="text-blue-600 font-medium">Drop node here to add to workflow</p>
+          </div>
+        </div>
+      )}
+
+      {nodes.length === 0 && !isDragOver && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <div className="text-center text-gray-500">
+            <p className="text-lg font-medium mb-2">Start Building Your Workflow</p>
+            <p>Drag nodes from the palette to begin</p>
+            <p className="text-sm mt-2 opacity-75">Click and drag to pan the canvas</p>
+          </div>
+        </div>
+      )}
+
+      {connectionInProgress && (
+        <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-purple-100 text-purple-800 px-4 py-2 rounded-lg shadow-lg border border-purple-200 z-50">
+          <p className="text-sm font-medium">Click on a target node to complete the connection</p>
+          <p className="text-xs opacity-75">Condition: "{connectionInProgress.condition}"</p>
+        </div>
+      )}
+
+      <div className="absolute bottom-4 right-4 bg-white/90 backdrop-blur-sm px-3 py-2 rounded-lg shadow-md border border-gray-200 text-xs text-gray-600">
+        <p>Click & drag canvas to pan • Click & drag nodes to move</p>
+      </div>
+    </div>
+  );
+};
+
+---
+---
+File Directory: src/hooks/useWorkflow.ts
+import { useState, useCallback, useRef } from 'react';
+import { AgentNode } from '../types/workflow';
+
+// Define the shape of the data in the exported/imported JSON file.
+// Notice that the agent data itself does not contain the name.
+type ExportedAgentData = Omit<AgentNode, 'id' | 'position' | 'name'>;
+interface ExportedWorkflow {
+  start_node: string;
+  agents: Record<string, ExportedAgentData>;
+}
+
+export const useWorkflow = () => {
+  const [nodes, setNodes] = useState<AgentNode[]>([]);
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [startNodeId, setStartNodeId] = useState<string>('');
+
+  const addNode = useCallback((position: { x: number; y: number }, type: 'conversational' | 'tool_execution') => {
+    const nodeCount = nodes.filter(n => n.type === type).length + 1;
+    let baseName = type === 'conversational' ? 'ConversationalAgent' : 'ToolExecutionAgent';
+    let newName = `${baseName}${nodeCount}`;
+
+    // Ensure new node name is unique
+    while (nodes.some(n => n.name === newName)) {
+        baseName += '+';
+        newName = `${baseName}${nodeCount}`;
+    }
+
+    const newNode: AgentNode = {
+      id: crypto.randomUUID(),
+      name: newName,
+      type,
+      initial_prompt: 'A new agent ready for a prompt.',
+      tools: [],
+      force_tool_call: type === 'tool_execution',
+      transitions: {},
+      position
+    };
+
+    setNodes(prev => [...prev, newNode]);
+    
+    // Set as start node if it's the first node
+    if (nodes.length === 0) {
+      setStartNodeId(newName);
+    }
+  }, [nodes]);
+
+  const updateNode = useCallback((updatedNode: AgentNode) => {
+    const originalNode = nodes.find(n => n.id === updatedNode.id);
+
+    setNodes(prev => {
+        // First, update the node itself
+        let newNodes = prev.map(node => node.id === updatedNode.id ? updatedNode : node);
+        
+        // If the name changed, update all transitions pointing to the old name
+        if (originalNode && originalNode.name !== updatedNode.name) {
+            newNodes = newNodes.map(node => {
+                const newTransitions = { ...node.transitions };
+                let changed = false;
+                for (const key in newTransitions) {
+                    if (newTransitions[key] === originalNode.name) {
+                        newTransitions[key] = updatedNode.name;
+                        changed = true;
+                    }
+                }
+                return changed ? { ...node, transitions: newTransitions } : node;
+            });
+        }
+        return newNodes;
+    });
+
+    // If the start node was the one that got renamed, update the startNodeId
+    if (originalNode && originalNode.name === startNodeId) {
+        setStartNodeId(updatedNode.name);
+    }
+  }, [nodes, startNodeId]);
+
+  const deleteNode = useCallback((nodeId: string) => {
+    const nodeToDelete = nodes.find(n => n.id === nodeId);
+    if (!nodeToDelete) return;
+
+    setNodes(prev => {
+      // Filter out the deleted node
+      const remainingNodes = prev.filter(node => node.id !== nodeId);
+      
+      // Remove any transitions that were pointing to the deleted node
+      return remainingNodes.map(node => {
+        const newTransitions = { ...node.transitions };
+        let changed = false;
+        Object.keys(newTransitions).forEach(key => {
+            if(newTransitions[key] === nodeToDelete.name) {
+                delete newTransitions[key];
+                changed = true;
+            }
+        });
+        return changed ? { ...node, transitions: newTransitions } : node;
+      });
+    });
+
+    // If the deleted node was the start node, pick a new start node or clear it
+    if (nodeToDelete.name === startNodeId) {
+        const newStartNode = nodes.find(n => n.id !== nodeId);
+        setStartNodeId(newStartNode ? newStartNode.name : '');
+    }
+
+    if (selectedNodeId === nodeId) {
+      setSelectedNodeId(null);
+    }
+  }, [nodes, startNodeId, selectedNodeId]);
+
+  const clearAll = useCallback(() => {
+    setNodes([]);
+    setSelectedNodeId(null);
+    setStartNodeId('');
+  }, []);
+
+  const exportWorkflow = useCallback((): ExportedWorkflow => {
+    const agents: Record<string, ExportedAgentData> = {};
+    
+    nodes.forEach(node => {
+      // Destructure to remove properties that shouldn't be in the exported agent object
+      const { id, position, name, ...agentData } = node;
+      agents[name] = agentData;
+    });
+
+    return {
+      start_node: startNodeId,
+      agents
+    };
+  }, [nodes, startNodeId]);
+
+  const importWorkflow = useCallback((workflow: { agent_graph: ExportedWorkflow }) => {
+    const { agent_graph } = workflow;
+    if (!agent_graph || !agent_graph.agents) {
+        alert("Import failed: Invalid JSON structure.");
+        return;
+    }
+    
+    const nodeNames = Object.keys(agent_graph.agents);
+    const existingNodesMap = new Map(nodes.map(node => [node.name, node]));
+    const updatedNodes: AgentNode[] = [];
+    const usedIds = new Set<string>();
+
+    // Process nodes from the imported graph
+    nodeNames.forEach((name, index) => {
+      const agentData = agent_graph.agents[name];
+      const existingNode = existingNodesMap.get(name);
+
+      if (existingNode) {
+        // Update existing node, preserving its ID and position
+        const updatedNode: AgentNode = {
+          ...existingNode,
+          ...agentData,
+          name: name, // Ensure name is correct
+        };
+        updatedNodes.push(updatedNode);
+        usedIds.add(existingNode.id);
+      } else {
+        // It's a new node, create it with a new ID and calculated position
+        const cols = Math.ceil(Math.sqrt(nodes.length || 1));
+        const row = Math.floor(index / cols);
+        const col = index % cols;
+
+        const newNode: AgentNode = {
+          id: crypto.randomUUID(),
+          name: name,
+          type: agentData.type,
+          initial_prompt: agentData.initial_prompt,
+          tools: agentData.tools,
+          force_tool_call: agentData.force_tool_call,
+          transitions: agentData.transitions,
+          position: {
+            x: 100 + col * 400,
+            y: 100 + row * 350
+          }
+        };
+        updatedNodes.push(newNode);
+        usedIds.add(newNode.id);
+      }
+    });
+    
+    // The nodes are now the updated/new nodes. Any node from the old state that wasn't in the new
+    // agent_graph is implicitly removed.
+    setNodes(updatedNodes);
+    setStartNodeId(agent_graph.start_node);
+    setSelectedNodeId(null);
+  }, []);
+
+  const validateWorkflow = useCallback(() => {
+    const errors: string[] = [];
+    if (!startNodeId) errors.push("A start node must be designated.");
+    
+    const nodeNames = new Set<string>();
+    nodes.forEach(node => {
+      if (nodeNames.has(node.name)) errors.push(`Duplicate node name: "${node.name}".`);
+      nodeNames.add(node.name);
+
+      if (!node.initial_prompt.trim()) errors.push(`Node "${node.name}" is missing an initial prompt.`);
+
+      Object.entries(node.transitions).forEach(([condition, targetName]) => {
+        if (!targetName) errors.push(`Node "${node.name}" has an incomplete transition for condition "${condition}".`);
+        else if (!nodes.some(n => n.name === targetName)) errors.push(`Node "${node.name}" has a transition to a non-existent node: "${targetName}".`);
+      });
+    });
+
+    return errors;
+  }, [nodes, startNodeId]);
+
+  return {
+    nodes,
+    selectedNodeId,
+    startNodeId,
+    setSelectedNodeId,
+    setStartNodeId,
+    addNode,
+    updateNode,
+    deleteNode,
+    clearAll,
+    exportWorkflow,
+    importWorkflow,
+    validateWorkflow
+  };
+};
+---

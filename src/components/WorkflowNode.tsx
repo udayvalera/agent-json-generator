@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { MessageCircle, Cog, Play, Trash2, Plus, ChevronsDown, ChevronsUp, Move, Check, X as IconX } from 'lucide-react';
+import { MessageCircle, Cog, Play, Trash2, Plus, ChevronsDown, ChevronsUp, Move, Check, X as IconX, ZoomIn, ZoomOut } from 'lucide-react';
 import { AgentNode, AVAILABLE_TOOLS } from '../types/workflow';
 
 interface WorkflowNodeProps {
@@ -17,6 +17,7 @@ interface WorkflowNodeProps {
   dragOffset?: { x: number; y: number } | null;
   connectionInProgress: boolean;
   isDragging: boolean;
+  zoom: number;
   registerInputTerminal: (el: HTMLDivElement | null) => void;
   registerOutputTerminal: (condition: string, el: HTMLDivElement | null) => void;
 }
@@ -36,6 +37,7 @@ export const WorkflowNode: React.FC<WorkflowNodeProps> = ({
   onMouseDown,
   connectionInProgress,
   isDragging,
+  zoom,
   registerInputTerminal,
   registerOutputTerminal,
 }) => {
@@ -43,6 +45,7 @@ export const WorkflowNode: React.FC<WorkflowNodeProps> = ({
   const [editingName, setEditingName] = useState(false);
   const [tempName, setTempName] = useState(node.name);
   const [nameError, setNameError] = useState('');
+  const [editingTransition, setEditingTransition] = useState<{ oldCondition: string; newCondition: string } | null>(null);
   const isConversational = node.type === 'conversational';
   const transitionEntries = Object.entries(node.transitions);
   const nodeColors = {
@@ -76,6 +79,7 @@ export const WorkflowNode: React.FC<WorkflowNodeProps> = ({
     setNameError('');
     setEditingName(false);
   };
+
   const handleNameKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
       validateAndSaveName();
@@ -85,6 +89,7 @@ export const WorkflowNode: React.FC<WorkflowNodeProps> = ({
       setEditingName(false);
     }
   };
+
   const addTransition = () => {
     const newCondition = 'new_condition';
     let i = 1;
@@ -93,16 +98,16 @@ export const WorkflowNode: React.FC<WorkflowNodeProps> = ({
     }
     onUpdate({ ...node, transitions: { ...node.transitions, [`${newCondition}_${i}`]: '' } });
   };
+
   const updateTransitionCondition = (oldCondition: string, newCondition: string) => {
-    if (oldCondition === newCondition) return;
+    if (oldCondition === newCondition || !newCondition.trim()) return;
     const newTransitions = { ...node.transitions };
     const target = newTransitions[oldCondition];
     delete newTransitions[oldCondition];
-    if(newCondition) {
-      newTransitions[newCondition] = target;
-    }
+    newTransitions[newCondition.trim()] = target;
     onUpdate({ ...node, transitions: newTransitions });
   };
+
   const removeTransition = (condition: string) => {
     const { [condition]: _, ...rest } = node.transitions;
     onUpdate({ ...node, transitions: rest });
@@ -115,17 +120,13 @@ export const WorkflowNode: React.FC<WorkflowNodeProps> = ({
     onUpdate({ ...node, tools: newTools });
   };
 
-  // --- SMOOTH DRAGGING STYLE CALCULATION ---
   const style: React.CSSProperties = {
-    // Base position from the node's stored position
     top: `${node.position.y}px`,
     left: `${node.position.x}px`,
     pointerEvents: 'auto',
-    // Apply smooth CSS transform during drag for GPU acceleration
     transform: (isDragging && dragOffset)
-      ? `translate(${dragOffset.x}px, ${dragOffset.y}px)`
+      ? `translate(${dragOffset.x / zoom}px, ${dragOffset.y / zoom}px)`
       : 'none',
-    // Add smooth transition when not dragging for polished feel
     transition: isDragging ? 'none' : 'transform 0.1s ease-out',
   };
 
@@ -134,6 +135,7 @@ export const WorkflowNode: React.FC<WorkflowNodeProps> = ({
     e.preventDefault();
     onStartConnection(node.id, condition);
   };
+
   const handleNodeClick = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (connectionInProgress) {
@@ -142,6 +144,7 @@ export const WorkflowNode: React.FC<WorkflowNodeProps> = ({
       onClick();
     }
   };
+
   return (
     <div
       className={`absolute bg-white rounded-xl transition-all duration-150 flex flex-col ${isDragging ? `shadow-2xl scale-105 z-50 ${colors.shadow}` : `shadow-lg ${colors.shadow}`} ${isSelected ? `border-2 ${colors.border}` : 'border border-gray-200'} w-80`}
@@ -152,20 +155,20 @@ export const WorkflowNode: React.FC<WorkflowNodeProps> = ({
       <div ref={registerInputTerminal} className="absolute left-0 top-1/2 -translate-x-1/2 -translate-y-1/2 w-6 h-6 z-0">{connectionInProgress && <div className="w-full h-full bg-purple-200 rounded-full border-2 border-white shadow-lg animate-pulse ring-2 ring-purple-400"></div>}</div>
       
       <div 
-        className={`p-3 rounded-t-xl flex items-center justify-between ${colors.bg} cursor-grab active:cursor-grabbing`}
+        className={`p-3 rounded-t-xl flex items-center justify-between space-x-3 ${colors.bg} cursor-grab active:cursor-grabbing`}
         onMouseDown={onMouseDown}
       >
-        <div className="flex items-center space-x-3">
+        <div className="flex-1 flex items-center space-x-3 min-w-0">
             <Move className="w-4 h-4 text-gray-400 pointer-events-none" />
-            <div className="flex items-center space-x-2">
-                {isConversational ? <MessageCircle className={`w-5 h-5 ${colors.icon}`} /> : <Cog className={`w-5 h-5 ${colors.icon}`} />}
+            <div className="flex items-center space-x-2 min-w-0">
+               {isConversational ? <MessageCircle className={`w-5 h-5 ${colors.icon}`} /> : <Cog className={`w-5 h-5 ${colors.icon}`} />}
                 {editingName ? (
-                    <div className="flex flex-col" onMouseDown={e => e.stopPropagation()}>
-                        <input type="text" value={tempName} onChange={e => setTempName(e.target.value)} onKeyDown={handleNameKeyDown} onBlur={validateAndSaveName} autoFocus onClick={e => e.stopPropagation()} className={`px-2 py-1 text-md font-semibold rounded-md border ${nameError ? 'border-red-400' : 'border-blue-300'} focus:ring-2 focus:ring-blue-300 focus:outline-none`} />
+                    <div className="flex flex-col w-full" onMouseDown={e => e.stopPropagation()}>
+                        <input type="text" value={tempName} onChange={e => setTempName(e.target.value)} onKeyDown={handleNameKeyDown} onBlur={validateAndSaveName} autoFocus onClick={e => e.stopPropagation()} className={`w-full px-2 py-1 text-md font-semibold rounded-md border ${nameError ? 'border-red-400' : 'border-blue-300'} focus:ring-2 focus:ring-blue-300 focus:outline-none`} />
                         {nameError && <p className="text-xs text-red-600 mt-1">{nameError}</p>}
                     </div>
                 ) : (
-                    <h3 onClick={e => { e.stopPropagation(); setEditingName(true); }} onMouseDown={e => e.stopPropagation()} className={`font-semibold text-md ${colors.text} cursor-pointer hover:bg-white/60 px-2 py-1 rounded-md`}>{node.name}</h3>
+                    <h3 onClick={e => { e.stopPropagation(); setEditingName(true); }} onMouseDown={e => e.stopPropagation()} className={`font-semibold text-md ${colors.text} cursor-pointer hover:bg-white/60 px-2 py-1 rounded-md truncate`}>{node.name}</h3>
                 )}
             </div>
         </div>
@@ -182,14 +185,14 @@ export const WorkflowNode: React.FC<WorkflowNodeProps> = ({
         </div>
         {node.type === 'tool_execution' && (
              <div>
-                <label className="block text-xs font-medium text-gray-500 mb-2">Tools</label>
+                 <label className="block text-xs font-medium text-gray-500 mb-2">Tools</label>
                 <div className="grid grid-cols-2 gap-2">
                     {AVAILABLE_TOOLS.map(tool => (
                         <label key={tool} className="flex items-center space-x-2 p-1.5 hover:bg-gray-100 rounded-md cursor-pointer">
-                            <input type="checkbox" checked={node.tools.includes(tool)} onChange={() => toggleTool(tool)} onClick={e => e.stopPropagation()} className="w-4 h-4 rounded border-gray-300 text-purple-600 focus:ring-purple-500" />
+                           <input type="checkbox" checked={node.tools.includes(tool)} onChange={() => toggleTool(tool)} onClick={e => e.stopPropagation()} className="w-4 h-4 rounded border-gray-300 text-purple-600 focus:ring-purple-500" />
                             <span className="text-sm text-gray-700">{tool.replace('_tool', '')}</span>
                         </label>
-                    ))}
+                     ))}
                 </div>
                 <label className="flex items-center space-x-2 p-1.5 hover:bg-gray-100 rounded-md cursor-pointer mt-2">
                     <input type="checkbox" checked={node.force_tool_call} onChange={e => onUpdate({ ...node, force_tool_call: e.target.checked })} onClick={e => e.stopPropagation()} className="w-4 h-4 rounded border-gray-300 text-purple-600 focus:ring-purple-500" />
@@ -205,15 +208,38 @@ export const WorkflowNode: React.FC<WorkflowNodeProps> = ({
             <button onClick={e => { e.stopPropagation(); addTransition(); }} className="flex items-center space-x-1.5 px-2 py-1 text-xs bg-purple-100 text-purple-700 rounded-md hover:bg-purple-200 font-semibold"><Plus className="w-3 h-3" /><span>Add</span></button>
         </div>
         <div className="space-y-2">
-            {transitionEntries.length > 0 ? transitionEntries.map(([condition, targetName]) => (
-                <div key={condition} className="relative flex items-center justify-between bg-gray-100 p-2 rounded-lg group">
-                    <input type="text" value={condition} onBlur={e => updateTransitionCondition(condition, e.target.value)} onChange={e => e.stopPropagation()} onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur()}} onClick={e => e.stopPropagation()} className="flex-1 text-sm bg-transparent outline-none focus:bg-white px-1 py-0.5 rounded-md"/>
-                    <button onClick={() => removeTransition(condition)} className="p-1 text-gray-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 className="w-3.5 h-3.5" /></button>
-                    <div ref={el => registerOutputTerminal(condition, el)} className="absolute right-0 top-1/2 translate-x-1/2 -translate-y-1/2 w-6 h-6 z-10" onMouseDown={e => handleTerminalMouseDown(condition, e)}>
-                        <div className={`w-full h-full rounded-full border-2 border-white shadow-md flex items-center justify-center transition-all cursor-pointer group-hover:scale-125 ${targetName ? 'bg-green-500 group-hover:bg-green-600' : 'bg-purple-500 group-hover:bg-purple-600'}`} />
-                    </div>
-                </div>
-            )) : <div className="text-center py-2"><p className="text-sm text-gray-400 italic">No transitions.</p></div>}
+            {transitionEntries.length > 0 ? transitionEntries.map(([condition, targetName]) => {
+                const isEditing = editingTransition?.oldCondition === condition;
+                return (
+                  <div key={condition} className="relative flex items-center justify-between bg-gray-100 p-2 rounded-lg group">
+                      <input 
+                        type="text" 
+                        value={isEditing ? editingTransition.newCondition : condition} 
+                        onFocus={() => setEditingTransition({ oldCondition: condition, newCondition: condition })}
+                        onChange={e => {
+                          e.stopPropagation();
+                          setEditingTransition(prev => prev ? { ...prev, newCondition: e.target.value } : null);
+                        }}
+                        onBlur={() => {
+                          if (editingTransition) {
+                            updateTransitionCondition(editingTransition.oldCondition, editingTransition.newCondition);
+                            setEditingTransition(null);
+                          }
+                        }}
+                        onKeyDown={e => { 
+                          e.stopPropagation();
+                          if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+                          if (e.key === 'Escape') setEditingTransition(null);
+                        }} 
+                        onClick={e => e.stopPropagation()} 
+                        className="flex-1 text-sm bg-transparent outline-none focus:bg-white px-1 py-0.5 rounded-md"/>
+                      <button onClick={() => removeTransition(condition)} className="p-1 text-gray-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 className="w-3.5 h-3.5" /></button>
+                      <div ref={el => registerOutputTerminal(condition, el)} className="absolute right-0 top-1/2 translate-x-1/2 -translate-y-1/2 w-6 h-6 z-10" onMouseDown={e => handleTerminalMouseDown(condition, e)}>
+                          <div className={`w-full h-full rounded-full border-2 border-white shadow-md flex items-center justify-center transition-all cursor-pointer group-hover:scale-125 ${targetName ? 'bg-green-500 group-hover:bg-green-600' : 'bg-purple-500 group-hover:bg-purple-600'}`} />
+                      </div>
+                  </div>
+                )
+            }) : <div className="text-center py-2"><p className="text-sm text-gray-400 italic">No transitions.</p></div>}
         </div>
       </div>
       
