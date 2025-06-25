@@ -25,3 +25,6 @@ __pycache__
 *.sw?
 .env
 .bolt
+test.json
+*.py
+*.txt
